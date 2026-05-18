@@ -23,6 +23,12 @@ The following files are patched and stored in the `localstack-patches/` director
 ### Prerequisites
 - LocalStack Azure container running (e.g., `da4ee600dc46`).
 - External Azurite container running as a sibling on `localhost:10000/10001/10002`.
+- 
+
+Pre-requisite: Run azurite docker container
+`docker run -d --name azurite \
+  -p 10000:10000 -p 10001:10001 -p 10002:10002 \
+  mcr.microsoft.com/azure-storage/azurite`
 
 ### Application Steps
 Apply the patches to the `.venv` installed path (which is what runs at runtime) and the source path for consistency.
@@ -76,7 +82,6 @@ curl -s -X PUT "http://localhost:10000/teststore123/test-container?restype=conta
   -H "Authorization: SharedKey teststore123:<computed_signature>"
 # Expected: HTTP 201
 ```
-
 ## Success Criteria
 - [x] Storage Account GET returns `"provisioningState": "Succeeded"`
 - [x] No `ResourceNotFound` or `ContainerException` in logs after creation
