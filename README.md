@@ -27,6 +27,13 @@
 ---
 
 ## Quick Start
+```bash
+docker run -d -p 4566:4566 -p 4510:4510 \
+  -v ~/.orbstack/run/docker.sock:/var/run/docker.sock \
+  -v ~/.localstack/volume:/var/lib/localstack \
+  -e ACTIVATE_PRO=0 \
+  localstack/localstack-azure-alpha:8a3d8a4e462fe9f3b305f4076a3050e8fd1750de
+```
 
 ```bash
 # 1. Build the patched image (do this once)
