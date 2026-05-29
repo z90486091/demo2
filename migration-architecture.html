@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>High-Density Network Architecture: Oracle to Azure DBAS</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'JetBrains Mono', monospace; background: #fff; padding: 2rem; color: #000; }
+    .container { max-width: 1800px; margin: 0 auto; }
+    .header { border-bottom: 4px solid #000; margin-bottom: 2rem; padding-bottom: 1rem; }
+    h1 { font-size: 1.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: -0.05em; }
+    .subtitle { color: #444; font-size: 0.9rem; margin-top: 0.5rem; font-weight: 500; }
+    .diagram-container { background: #fff; border: 2px solid #000; padding: 1rem; overflow-x: auto; }
+    svg { width: 100%; min-width: 1700px; display: block; }
+    
+    /* Chiclet Card Styles */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-top: 2rem; }
+    .card { background: #fff; border: 2px solid #000; border-radius: 12px; padding: 1.25rem; box-shadow: 4px 4px 0px #000; }
+    .card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; border-bottom: 1px solid #eee; padding-bottom: 0.5rem; }
+    .card-dot { width: 10px; height: 10px; border-radius: 50%; background: #000; }
+    .card h3 { font-size: 1rem; font-weight: 700; text-transform: uppercase; }
+    .card ul { list-style: none; color: #333; font-size: 0.85rem; }
+    .card li { margin-bottom: 0.5rem; display: flex; align-items: flex-start; gap: 0.5rem; }
+    .card li::before { content: "→"; font-weight: 700; }
+    
+    .footer { text-align: center; margin-top: 2rem; color: #666; font-size: 0.75rem; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Oracle on-Prem to Azure DBAS: Technical Network Blueprint</h1>
+      <p class="subtitle">Detailed Hub-Spoke Topology | L3 Routing Matrix | CIDR Allocation</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1700 750">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#000" />
+          </marker>
+          <marker id="arrowhead-grey" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#eee" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ON-PREM DC -->
+        <rect x="40" y="200" width="240" height="220" rx="6" fill="#fff" stroke="#000" stroke-width="2"/>
+        <text x="160" y="230" fill="#000" font-size="13" font-weight="700" text-anchor="middle">ON-PREM DATA CENTER</text>
+        <text x="160" y="250" fill="#000" font-size="11" font-weight="700" text-anchor="middle">CIDR: 10.0.0.0/16</text>
+        
+        <rect x="60" y="270" width="200" height="100" rx="4" fill="#f9f9f9" stroke="#000" stroke-width="1"/>
+        <text x="160" y="295" fill="#000" font-size="11" font-weight="600" text-anchor="middle">Source Oracle DB</text>
+        <text x="160" y="310" fill="#444" font-size="9" text-anchor="middle">Version: 19c Enterprise</text>
+        <text x="160" y="325" fill="#444" font-size="9" text-anchor="middle">Single Instance</text>
+        <text x="160" y="340" fill="#444" font-size="9" text-anchor="middle">SGA: 64GB | PGA: 32GB</text>
+
+        <!-- AZURE REGION BOUNDARY -->
+        <rect x="350" y="50" width="600" height="500" rx="12" fill="none" stroke="#000" stroke-width="1" stroke-dasharray="10,5"/>
+        <text x="360" y="75" fill="#000" font-size="12" font-weight="700">AZURE CLOUD REGION</text>
+
+        <!-- HUB VNET -->
+        <rect x="380" y="100" width="300" height="420" rx="8" fill="#f2f2f2" stroke="#000" stroke-width="2"/>
+        <text x="530" y="125" fill="#000" font-size="13" font-weight="700" text-anchor="middle">HUB VNET</text>
+        <text x="530" y="140" fill="#000" font-size="11" font-weight="700" text-anchor="middle">CIDR: 172.16.0.0/22</text>
+        
+        <rect x="400" y="160" width="260" height="80" rx="4" fill="#fff" stroke="#000" stroke-width="1"/>
+        <text x="530" y="185" fill="#000" font-size="11" font-weight="600" text-anchor="middle">GatewaySubnet</text>
+        <text x="530" y="200" fill="#666" font-size="9" text-anchor="middle">CIDR: 172.16.0.0/24</text>
+        <text x="530" y="215" fill="#666" font-size="9" text-anchor="middle">ExpressRoute Gateway (ERGW)</text>
+
+        <rect x="400" y="260" width="260" height="80" rx="4" fill="#fff" stroke="#000" stroke-width="1"/>
+        <text x="530" y="285" fill="#000" font-size="11" font-weight="600" text-anchor="middle">AzureFirewallSubnet</text>
+        <text x="530" y="300" fill="#666" font-size="9" text-anchor="middle">CIDR: 172.16.1.0/24</text>
+        <text x="530" y="315" fill="#666" font-size="9" text-anchor="middle">L7 Filtering / Traffic Inspection</text>
+
+        <rect x="400" y="360" width="260" height="140" rx="4" fill="#fff" stroke="#000" stroke-width="1"/>
+        <text x="530" y="385" fill="#000" font-size="11" font-weight="600" text-anchor="middle">Routing Layer</text>
+        <text x="530" y="400" fill="#666" font-size="9" text-anchor="middle">UDR: 0.0.0.0/0 &gt; AZ FW</text>
+        <text x="530" y="415" fill="#666" font-size="9" text-anchor="middle">UDR: 192.168.0.0/24 &gt; ERGW</text>
+        <text x="530" y="430" fill="#666" font-size="9" text-anchor="middle">Peering: SpokeVNet (Hub-Spoke)</text>
+
+        <!-- SPOKE VNET -->
+        <rect x="720" y="200" width="200" height="220" rx="8" fill="#fff" stroke="#000" stroke-width="2"/>
+        <text x="820" y="230" fill="#000" font-size="13" font-weight="700" text-anchor="middle">SPOKE VNET</text>
+        <text x="820" y="250" fill="#000" font-size="11" font-weight="700" text-anchor="middle">CIDR: 172.16.4.0/24</text>
+
+        <rect x="740" y="270" width="160" height="120" rx="4" fill="#f9f9f9" stroke="#000" stroke-width="1"/>
+        <text x="820" y="295" fill="#000" font-size="11" font-weight="600" text-anchor="middle">Migration Subnet</text>
+        <text x="820" y="310" fill="#666" font-size="9" text-anchor="middle">CIDR: 172.16.4.0/26</text>
+        <text x="820" y="325" fill="#000" font-size="10" font-weight="700" text-anchor="middle">ZDM AGENT VM</text>
+        <text x="820" y="340" fill="#666" font-size="9" text-anchor="middle">OS: Oracle Linux 8</text>
+
+        <!-- OCI REGION BOUNDARY -->
+        <rect x="1000" y="100" width="600" height="400" rx="12" fill="none" stroke="#000" stroke-width="1" stroke-dasharray="10,5"/>
+        <text x="1010" y="125" fill="#000" font-size="12" font-weight="700">OCI CLOUD REGION (Oracle Database@Azure)</text>
+
+        <!-- OCI FastConnect -->
+        <rect x="1030" y="280" width="180" height="60" rx="6" fill="#f2f2f2" stroke="#000" stroke-width="1.5"/>
+        <text x="1120" y="300" fill="#000" font-size="11" font-weight="600" text-anchor="middle">OCI FastConnect</text>
+        <text x="1120" y="315" fill="#666" font-size="9" text-anchor="middle">Private L2 Interconnect</text>
+
+        <!-- OCI DBAS Instance -->
+        <rect x="1250" y="200" width="250" height="220" rx="8" fill="#fff" stroke="#000" stroke-width="2"/>
+        <text x="1375" y="230" fill="#000" font-size="13" font-weight="700" text-anchor="middle">Oracle Database@Azure</text>
+        <text x="1375" y="250" fill="#000" font-size="11" font-weight="700" text-anchor="middle">CIDR: 192.168.0.0/24</text>
+        
+        <rect x="1270" y="270" width="210" height="120" rx="4" fill="#f9f9f9" stroke="#000" stroke-width="1"/>
+        <text x="1375" y="295" fill="#000" font-size="11" font-weight="600" text-anchor="middle">Target DB Instance</text>
+        <text x="1375" y="310" fill="#666" font-size="9" text-anchor="middle">Version: 19c Single Instance</text>
+        <text x="1375" y="325" fill="#666" font-size="9" text-anchor="middle">Type: Physical Standby (during migration)</text>
+        <text x="1375" y="340" fill="#666" font-size="9" text-anchor="middle">Storage: OCI Block Volume (Ultra High Perf)</text>
+
+        <!-- ZDM CONTROL PLANE -->
+        <rect x="400" y="600" width="800" height="100" rx="8" fill="#f9f9f9" stroke="#000" stroke-width="2" stroke-dasharray="5,5"/>
+        <text x="800" y="630" fill="#000" font-size="14" font-weight="700" text-anchor="middle">ZDM ORCHESTRATOR (CONTROL PLANE)</text>
+        <text x="800" y="650" fill="#444" font-size="10" text-anchor="middle">Role: Full Automation of Discovery, Staging, and Cutover Processes</text>
+        <text x="800" y="670" fill="#000" font-size="11" font-weight="600" text-anchor="middle">PHASE: [DISCOVERY] &rarr; [STAGING] &rarr; [SYNC] &rarr; [CUTOVER]</text>
+
+        <!-- DATA PATH LINES -->
+        <line x1="280" y1="300" x2="400" y2="200" stroke="#000" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="340" y="240" fill="#000" font-size="9" font-weight="700" text-anchor="middle">EXPRESSROUTE</text>
+        
+        <line x1="530" y1="420" x2="820" y2="350" stroke="#000" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="680" y="400" fill="#000" font-size="9" font-weight="700" text-anchor="middle">VNET PEERING</text>
+
+        <line x1="920" y1="300" x2="1030" y2="300" stroke="#000" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="975" y="290" fill="#000" font-size="9" font-weight="700" text-anchor="middle">FASTCONNECT</text>
+
+        <line x1="1210" y1="300" x2="1250" y2="300" stroke="#000" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1230" y="290" fill="#000" font-size="9" font-weight="700" text-anchor="middle">TGT</text>
+
+        <!-- ZDM CONTROL LINES -->
+        <path d="M 400 650 L 160 420" fill="none" stroke="#666" stroke-width="1" stroke-dasharray="4,4" marker-end="url(#arrowhead-grey)"/>
+        <text x="250" y="550" fill="#666" font-size="9" text-anchor="middle">Discovery/Sourcing</text>
+
+        <path d="M 600 600 L 820 420" fill="none" stroke="#666" stroke-width="1" stroke-dasharray="4,4" marker-end="url(#arrowhead-grey)"/>
+        <text x="710" y="520" fill="#666" font-size="9" text-anchor="middle">Agent Provisioning</text>
+
+        <path d="M 1000 600 L 1375 420" fill="none" stroke="#666" stroke-width="1" stroke-dasharray="4,4" marker-end="url(#arrowhead-grey)"/>
+        <text x="1200" y="520" fill="#666" font-size="9" text-anchor="middle">Target Sync/Cutover</text>
+
+      </svg>
+    </div>
+
+    <!-- CHICLET CALLOUTS -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot"></div>
+          <h3>Connectivity Stack</h3>
+        </div>
+        <ul>
+          <li>Azure ExpressRoute: L3 Private Peering, 10Gbps dedicated bandwidth.</li>
+          <li>Azure Hub VNet: Central routing hub with Azure Firewall and Gateway.</li>
+          <li>OCI FastConnect: L2 low-latency interconnect between Azure and OCI.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot"></div>
+          <h3>Target Environment</h3>
+        </div>
+        <ul>
+          <li>OCI Database@Azure: Managed service co-located in Azure regions.</li>
+          <li>Target DB: Oracle 19c Single Instance with Optimized Block Storage.</li>
+          <li>L3 Isolation: Dedicated CIDR 192.168.0.0/24 for target subnet.</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot"></div>
+          <h3>Migration Lifecycle</h3>
+        </div>
+        <ul>
+          <li>Discovery: Automated scan of source DB environment and specs.</li>
+          <li>Staging: Provisioning target and preparing Physical Standby.</li>
+          <li>Cutover: Final synchronization and seamless role switchover.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer">
+      Oracle DB Migration Technical Blueprint • v3.1 High-Density • Proprietary Architecture
+    </div>
+  </div>
+</body>
+</html>
