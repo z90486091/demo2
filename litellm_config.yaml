@@ -1,0 +1,1093 @@
+router_settings:
+  routing_strategy: least-busy
+  cooldown_time: 30
+  num_retries: 5
+litellm_settings:
+  drop_params: true
+  callbacks: []
+general_settings:
+  disable_responses_id_security: true
+  maximum_spend_logs_retention_period: 1d
+  store_model_in_db: false
+mcp_servers:
+  test:
+    url: https://ins0mn1a-mums-v1.hf.space/mcp
+    transport: http
+    auth_type: none
+    alias: test
+    http2: false
+    limits:
+      max_keepalive_connections: 0
+model_list:
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: plan-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 3.0e-07
+    output_cost_per_token: 2.5e-06
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: orch-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-flash-lite-latest
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: code-agent
+  litellm_params:
+    tpm: 250000
+    rpm: 10
+    model: gemini/gemini-2.5-flash-lite
+    rpd: 1500
+    extra_body:
+      disable_retrieval: true
+  model_info:
+    mode: chat
+    max_tokens: 65535
+    max_input_tokens: 1048576
+    max_output_tokens: 65535
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 4.0e-07
+    litellm_provider: gemini
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_prompt_caching: true
+    supports_web_search: true
+    supports_reasoning: true
+- model_name: gemini/gemini-embedding-001
+  litellm_params:
+    custom_llm_provider: gemini
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    input_cost_per_token: 1.5e-07
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: embeddings-agent
+  litellm_params:
+    model: gemini/gemini-embedding-001
+  model_info:
+    mode: embedding
+    max_tokens: 2048
+    max_input_tokens: 2048
+    output_vector_size: 3072
+    litellm_provider: gemini
+- model_name: openrouter/anthropic/claude-3-haiku
+  litellm_params:
+    custom_llm_provider: openrouter
+    model: openrouter/anthropic/claude-3-haiku
+  model_info:
+    max_tokens: 4096
+    max_input_tokens: 200000
+    max_output_tokens: 4096
+    input_cost_per_token: 2.5e-07
+    output_cost_per_token: 1.25e-06
+    litellm_provider: openrouter
+    mode: chat
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+- model_name: openrouter/qwen/qwen-vl-plus
+  litellm_params:
+    custom_llm_provider: openrouter
+    model: openrouter/qwen/qwen-vl-plus
+  model_info:
+    max_tokens: 2048
+    max_input_tokens: 8192
+    max_output_tokens: 2048
+    input_cost_per_token: 2.1e-07
+    output_cost_per_token: 6.3e-07
+    litellm_provider: openrouter
+    mode: chat
+    supports_vision: true
+    supports_tool_choice: true
+- model_name: cerebras/gpt-oss-120b
+  litellm_params:
+    input_cost_per_token: '3.5e-07'
+    output_cost_per_token: '7.5e-07'
+    custom_llm_provider: cerebras
+    litellm_credential_name: CEREBRAS_API_KEY
+    model: cerebras/gpt-oss-120b
+    tags: []
+    guardrails: []
+  model_info:
+    mode: chat
+    max_tokens: 32768
+    litellm_provider: cerebras
+    max_input_tokens: 131072
+    max_output_tokens: 32768
+    input_cost_per_token: 3.5e-07
+    supports_tool_choice: true
+    output_cost_per_token: 7.5e-07
+    supports_response_schema: true
+    supports_function_calling: true
+- model_name: gemma-4-31b-it
+  litellm_params:
+    input_cost_per_token: '0.0'
+    output_cost_per_token: '0.0'
+    custom_llm_provider: gemini
+    litellm_credential_name: g5
+    model: gemma-4-31b-it
+    tags: []
+    guardrails: []
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g8
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g7
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g9
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g10
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g1
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g2
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g3
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g4
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-31b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g6
+    model: gemma-4-31b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g5
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g9
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g10
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g1
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g2
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g3
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g4
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g6
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g7
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: gemma-4-26b-a4b-it
+  litellm_params:
+    custom_llm_provider: gemini
+    litellm_credential_name: g8
+    model: gemma-4-26b-a4b-it
+  model_info:
+    mode: chat
+- model_name: openrouter/minimax/minimax-m2.5:free
+  litellm_params:
+    input_cost_per_token: 3e-07
+    output_cost_per_token: '1.1e-06'
+    custom_llm_provider: openrouter
+    model: openrouter/minimax/minimax-m2.5:free
+    tags: []
+    guardrails: []
+  model_info:
+    mode: chat
+    max_tokens: 65536
+    litellm_provider: openrouter
+    max_input_tokens: 196608
+    max_output_tokens: 65536
+    supports_reasoning: true
+    input_cost_per_token: 3.0e-07
+    supports_tool_choice: true
+    output_cost_per_token: 1.1e-06
+    supports_prompt_caching: true
+    supports_function_calling: true
+- model_name: openrouter/openai/gpt-oss-120b
+  litellm_params:
+    input_cost_per_token: '1.8e-07'
+    output_cost_per_token: 8e-07
+    custom_llm_provider: openrouter
+    model: openrouter/openai/gpt-oss-120b
+    tags: []
+    guardrails: []
+  model_info:
+    mode: chat
+    max_tokens: 32768
+    litellm_provider: openrouter
+    max_input_tokens: 131072
+    max_output_tokens: 32768
+    supports_reasoning: true
+    input_cost_per_token: 1.8e-07
+    supports_tool_choice: true
+    output_cost_per_token: 8.0e-07
+    supports_response_schema: true
+    supports_function_calling: true
+- model_name: openrouter/openai/gpt-oss-20b
+  litellm_params:
+    input_cost_per_token: 2e-08
+    output_cost_per_token: 1e-07
+    custom_llm_provider: openrouter
+    model: openrouter/openai/gpt-oss-20b
+    tags: []
+    guardrails: []
+  model_info:
+    mode: chat
+    max_tokens: 32768
+    litellm_provider: openrouter
+    max_input_tokens: 131072
+    max_output_tokens: 32768
+    supports_reasoning: true
+    input_cost_per_token: 2.0e-08
+    supports_tool_choice: true
+    output_cost_per_token: 1.0e-07
+    supports_response_schema: true
+    supports_function_calling: true
+- model_name: openrouter/openrouter/free
+  litellm_params:
+    custom_llm_provider: openrouter
+    model: openrouter/openrouter/free
+  model_info:
+    max_tokens: 200000
+    max_input_tokens: 200000
+    litellm_provider: openrouter
+    mode: chat
+    supports_response_schema: true
+    supports_vision: true
+    supports_function_calling: true
+    supports_tool_choice: true
+    supports_reasoning: true
+- model_name: big-pickle
+  litellm_params:
+    api_base: https://opencode.ai/zen/v1
+    custom_llm_provider: custom_openai
+    model: big-pickle
+  model_info:
+    mode: chat
+- model_name: nemotron-3-super-free
+  litellm_params:
+    api_base: https://opencode.ai/zen/v1
+    custom_llm_provider: custom_openai
+    model: nemotron-3-super-free
+  model_info:
+    mode: chat
