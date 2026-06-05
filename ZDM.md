@@ -84,6 +84,88 @@ flowchart TB
     S6 -.->|Primary Target Swap| SRC_DB
     S6 -.->|Standby Primary Swap| TGT_DB
 
+```mermaid
+graph TD
+    %% ========== OCI NETWORK ==========
+    subgraph OCINet["OCI Network"]
+        direction TB
+        OCI_VCN[("OCI VCN")]
+        OCI_PrivateSubnet[("Private Subnet")]
+        OCI_PublicSubnet[("Public Subnet")]
+        OCI_ServiceGateway[("Service Gateway")]
+        OCI_ObjectStorage[("Object Storage")]
+        OCI_DRG[("Dynamic Routing Gateway")]
+        OCI_FastConnect[("FastConnect")]
+        OCI_VPN[("Site-to-Site VPN")]
+
+        OCI_VCN --> OCI_PrivateSubnet
+        OCI_VCN --> OCI_PublicSubnet
+        OCI_PrivateSubnet --> OCI_ServiceGateway
+        OCI_ServiceGateway --> OCI_ObjectStorage
+        OCI_VCN --> OCI_DRG
+        OCI_DRG --> OCI_FastConnect
+        OCI_DRG --> OCI_VPN
+    end
+
+    %% ========== AZURE NETWORK ==========
+    subgraph AzureNet["Azure Network"]
+        direction TB
+        AZ_VNet[("Azure Virtual Network")]
+        AZ_Subnet[("Subnet")]
+        AZ_LoadBalancer[("Internal Load Balancer")]
+        AZ_AppGateway[("Application Gateway")]
+        AZ_VPNGateway[("VPN Gateway")]
+        AZ_BlobStorage[("Blob Storage")]
+        AZ_PrivateLink[("Private Link")]
+
+        AZ_VNet --> AZ_Subnet
+        AZ_Subnet --> AZ_LoadBalancer
+        AZ_LoadBalancer --> AZ_AppGateway
+        AZ_VNet --> AZ_VPNGateway
+        AZ_VNet --> AZ_BlobStorage
+        AZ_BlobStorage --> AZ_PrivateLink
+    end
+
+    %% ========== ONLINE STRATEGY ==========
+    subgraph Online["Online Migration (Physical Online)"]
+        direction TB
+        SrcDB[("Source DB\n(Primary)\nOCI Private Subnet")]
+        ZDM[("ZDM Service\n(zdmhost)\nOCI Private Subnet")]
+        DG[("Data Guard\nStandby\nAzure Subnet")]
+        TgtDB[("Target DB\n(ExaDB-D)\nAzure Subnet")]
+        App[("Application\nAzure Subnet")]
+
+        SrcDB -->|RMAN Backup| ZDM
+        ZDM -->|OCI Private Subnet| DG
+        DG -->|OCI-to-Azure VPN| TgtDB
+        TgtDB -->|Azure Internal LB| App
+    end
+
+    %% ========== OFFLINE STRATEGY ==========
+    subgraph Offline["Offline Migration (Physical Offline)"]
+        direction TB
+        SrcDB_Off[("Source DB\n(Shutdown)\nOCI Private Subnet")]
+        ZDM_Off[("ZDM Service\n(zdmhost)\nOCI Private Subnet")]
+        RMAN[("RMAN Backup\nOCI Object Storage")]
+        TgtDB_Off[("Target DB\n(ExaDB-D)\nAzure Subnet")]
+        App_Off[("Application\nAzure Subnet")]
+
+        SrcDB_Off -->|Shutdown| RMAN
+        RMAN -->|OCI Object Storage| ZDM_Off
+        ZDM_Off -->|Azure Blob Storage| TgtDB_Off
+        TgtDB_Off -->|Azure Internal LB| App_Off
+    end
+
+    %% ========== CONNECTIVITY ==========
+    OCI_PrivateSubnet -->|FastConnect/VPN| AZ_VNet
+    OCI_ObjectStorage -->|OCI Service Gateway| AZ_BlobStorage
+    OCI_PrivateSubnet -->|ZDM| Online
+    OCI_PrivateSubnet -->|ZDM| Offline
+    AZ_Subnet -->|Data Guard| Online
+    AZ_Subnet -->|Target DB| Online
+    AZ_Subnet -->|Target DB| Offline
+    AZ_Subnet -->|Application| Online
+    AZ_Subnet -->|Application| Offline
 ```
 
 ---
