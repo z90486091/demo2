@@ -1,197 +1,81 @@
 #Mermaidjs for Oracle ZDM on Azure DBAS
 
-### Oracle ZDM Physical Online Migration Architecture (Direct Data Transfer)
-
-This comprehensive Mermaid diagram illustrates the comprehensive structural architecture and procedural flow of an Oracle Zero Downtime Migration (ZDM) Physical Online Migration using Direct Data Transfer. It details the compute environments, network communication pathways (protocols and ports), storage layers, and the complete 8-step execution lifecycle.
-
 ```mermaid
 flowchart TB
     %% Class Definitions for Styling
     classDef compute fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#000;
-    classDef storage fill:#efebe9,stroke:#4e342e,stroke-width:2px,color:#000;
     classDef network fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000;
     classDef zdm fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
-    classDef step fill:#f3e5f5,stroke:#4a148c,stroke-width:1px,color:#000;
+    classDef gateway fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
 
-    %% ZDM Management Tier
-    subgraph ZDM_TIER ["ZDM Control Plane (Management Tier)"]
-        ZDM_NODE["ZDM Service Host\n(Compute Instance / Linux VM)"]:::zdm
-        ZDM_CLI["ZDMCLI Software & Engine\n(Orchestration Layer)"]:::zdm
-        ZDM_RESP["zdm_template.rsp\n(Migration Response File)"]:::zdm
-        
-        ZDM_NODE --- ZDM_CLI
-        ZDM_CLI --- ZDM_RESP
-    end
-
-    %% Source Infrastructure Tier
-    subgraph SRC_TIER ["Source Infrastructure (On-Premises / Source Cloud)"]
-        subgraph SRC_COMPUTE ["Source Compute Layer"]
-            SRC_HOST["Primary Database Host Node\n(Bare Metal / VM / OVM)"]:::compute
-            SRC_DB["Oracle Primary Database\n(Single Instance / RAC\nArchivelog & Force Logging)"]:::compute
-            SRC_LST["Oracle Net Listener\n(Port 1521 / TNS Service)"]:::network
+    %% ON-PREMISES DATA CENTER NETWORK
+    subgraph ON_PREM_NW ["On-Premises Data Center Network"]
+        subgraph ON_PREM_COMPUTE ["On-Prem Compute Node Layer"]
+            ZDM_HOST["ZDM Service Host VM<br/>(Dedicated Linux Node)<br/>IP: aa.bb.cc.dd"]:::zdm
+            SRC_HOST["Primary DB Server Node<br/>(On-Prem Production Host)<br/>IP: aa.bb.sr.db"]:::compute
+            SRC_DB["Oracle Primary Database<br/>(FORCE LOGGING & ARCHIVELOG)<br/>DB_NAME: PROD"]:::compute
         end
         
-        subgraph SRC_STORAGE ["Source Storage Layer"]
-            SRC_DATA["Production Data Files\nRedo Logs, Control Files\n(SAN / NAS / Local ASM)"]:::storage
+        subgraph ON_PREM_NET ["On-Prem Network Config Matrix"]
+            SRC_LST["Local Listener (TNS)<br/>Static Port: 1521 / TCP"]:::network
+            SRC_HOST_FILE["Local /etc/hosts file<br/>Maps: Target IPs, Target SCAN,<br/>and Target VM hostnames"]:::network
         end
         
+        ZDM_HOST -.->|"Internal SSH Admin"| SRC_HOST
         SRC_HOST --- SRC_DB
-        SRC_DB <-->|I/O Read/Write| SRC_DATA
         SRC_HOST --- SRC_LST
+        SRC_HOST --- SRC_HOST_FILE
     end
 
-    %% Target Infrastructure Tier
-    subgraph TGT_TIER ["Target Infrastructure (OCI Cloud / Exadata / Azure)"]
-        subgraph TGT_COMPUTE ["Target Compute Layer"]
-            TGT_HOST["Target Database Host Node\n(ExaDB-D / ExaDB-C@Azure / BaseDB)"]:::compute
-            TGT_DB["Oracle Standby Database\n(Instantiated via Migration\nBecomes Primary on Switchover)"]:::compute
-            TGT_LST["Oracle Net Listener\n(Port 1521 / Cloud TNS)"]:::network
-        end
+    %% HYBRID CONNECTIVITY TRANSIT TIER
+    subgraph HYBRID_LINK ["Hybrid Transit Network (Cross-Premises Bridge)"]
+        ON_PREM_FW["On-Premises Edge Firewall<br/>(Egress Rules: 22, 1521)"]:::gateway
+        CONN_CHANNEL{"Network Interconnect Pathway<br/>(Azure ExpressRoute Circuit<br/>OR Site-to-Site VPN)"}:::gateway
+        AZ_EDGE_FW["Azure NSG / Gateway Firewall<br/>(Ingress Rules: 22, 1521)"]:::gateway
         
-        subgraph TGT_STORAGE ["Target Storage Layer"]
-            TGT_ASM["Oracle ASM Disk Groups\n(+DATA / +RECO / +GRID\nCloud Storage Grid)"]:::storage
-        end
-        
-        TGT_HOST --- TGT_DB
-        TGT_DB <-->|I/O Read/Write| TGT_ASM
-        TGT_HOST --- TGT_LST
+        ON_PREM_FW <--> CONN_CHANNEL <--> AZ_EDGE_FW
     end
 
-    %% Control Plane Orchestration (Network Pathways)
-    ZDM_CLI ==>|"[Step 1 & 2] Control & Prechecks&#10;SSH Port 22"| SRC_HOST
-    ZDM_CLI ==>|"[Step 1 & 2] Control & Target Prep&#10;SSH Port 22"| TGT_HOST
+    %% ORACLE DATABASE @ AZURE INFRASTRUCTURE
+    subgraph AZURE_CLOUD ["Microsoft Azure Cloud (VNet Framework)"]
+        subgraph AZURE_VNET ["Azure Virtual Network (VNet)"]
+            
+            subgraph DELEGATED_SUBNET ["Delegated Subnet to Oracle Database@Azure"]
+                TGT_SCAN["Cloud Virtual SCAN Listener<br/>(demo-scan-sample.oravcn...)<br/>Port: 1521 (SQL*Net)"]:::network
+                
+                subgraph TGT_CLUSTER ["Target ExaDB-D VM Cluster"]
+                    TGT_NODE1["ExaDB Target Node 1<br/>IP: ta.db.oa.1"]:::compute
+                    TGT_NODE2["ExaDB Target Node 2<br/>IP: ta.db.oa.2"]:::compute
+                    TGT_DB["Oracle Standby Database<br/>(Placeholder Template Instance<br/>DB_NAME: PROD)"]:::compute
+                end
+                
+                subgraph TGT_NET_CONFIG ["Target OS Local Routing"]
+                    TGT_HOST_FILE["Cluster Node /etc/hosts<br/>Maps: On-Prem Source IP<br/>& Hostname (All Nodes)"]:::network
+                end
+            end
+            
+            subgraph OCI_DNS_RES ["OCI Back-end Private VCN Network View"]
+                VCN_RESOLV["OCI Private DNS Resolver<br/>(Resolves Azure NFS Mounts / FQDN)"]:::network
+            end
+        end
+        
+        TGT_SCAN --> TGT_NODE1
+        TGT_SCAN --> TGT_NODE2
+        TGT_NODE1 --- TGT_DB
+        TGT_NODE2 --- TGT_DB
+        TGT_CLUSTER --- TGT_HOST_FILE
+        DELEGATED_SUBNET --- OCI_DNS_RES
+    end
 
-    %% Data Plane Interactions (Network & Streaming)
-    SRC_DB ===>|"[Step 3 & 4] Direct Data Transfer&#10;RMAN Active Duplicate (No Object Storage Backup)&#10;SQL*Net Port 1521"| TGT_DB
+    %% NETWORK TRAFFIC DIAGRAM FLOWS
+    %% Control Plane Traffic
+    ZDM_HOST ==>|"1. SSH Control (Port 22) via Transit"| ON_PREM_FW
+    AZ_EDGE_FW ==>|"2. Deliver SSH Packets to Node Vnics"| TGT_NODE1
+    AZ_EDGE_FW ==>|"2. Deliver SSH Packets to Node Vnics"| TGT_NODE2
+
+    %% Data Plane Traffic
+    SRC_DB ==>|"3. RMAN Active Duplicate Stream (Port 1521)"| ON_PREM_FW
+    AZ_EDGE_FW ==>|"4. Direct Ingestion via Cloud SCAN"| TGT_SCAN
     
-    SRC_DB <=>|"[Step 5] Continuous Data Sync&#10;Data Guard Redo Transport / Real-Time Apply&#10;SQL*Net Port 1521"| TGT_DB
-
-    %% Migration Workflow Lifecycle Sequence Box
-    subgraph LIFECYCLE ["ZDM Physical Online Sequence Lifecycle"]
-        direction LR
-        S1["1. Download & Config ZDM"]:::step --> 
-        S2["2. Start Migration / Prechecks"]:::step --> 
-        S3["3. Restore from Service (RMAN)"]:::step --> 
-        S4["4. Instantiate Target Standby"]:::step --> 
-        S5["5. Synchronize via Data Guard"]:::step --> 
-        S6["6. Switchover & Swap Roles"]:::step --> 
-        S7["7. Post-Migration Validations"]:::step --> 
-        S8["8. Finalize & Cleanup State"]:::step
-    end
-
-    %% Tying lifecycle events to the architecture components
-    S6 -.->|Orchestrates Role Swap| ZDM_CLI
-    S6 -.->|Primary Target Swap| SRC_DB
-    S6 -.->|Standby Primary Swap| TGT_DB
-
-```mermaid
-graph TD
-    %% ========== OCI NETWORK ==========
-    subgraph OCINet["OCI Network"]
-        direction TB
-        OCI_VCN[("OCI VCN")]
-        OCI_PrivateSubnet[("Private Subnet")]
-        OCI_PublicSubnet[("Public Subnet")]
-        OCI_ServiceGateway[("Service Gateway")]
-        OCI_ObjectStorage[("Object Storage")]
-        OCI_DRG[("Dynamic Routing Gateway")]
-        OCI_FastConnect[("FastConnect")]
-        OCI_VPN[("Site-to-Site VPN")]
-
-        OCI_VCN --> OCI_PrivateSubnet
-        OCI_VCN --> OCI_PublicSubnet
-        OCI_PrivateSubnet --> OCI_ServiceGateway
-        OCI_ServiceGateway --> OCI_ObjectStorage
-        OCI_VCN --> OCI_DRG
-        OCI_DRG --> OCI_FastConnect
-        OCI_DRG --> OCI_VPN
-    end
-
-    %% ========== AZURE NETWORK ==========
-    subgraph AzureNet["Azure Network"]
-        direction TB
-        AZ_VNet[("Azure Virtual Network")]
-        AZ_Subnet[("Subnet")]
-        AZ_LoadBalancer[("Internal Load Balancer")]
-        AZ_AppGateway[("Application Gateway")]
-        AZ_VPNGateway[("VPN Gateway")]
-        AZ_BlobStorage[("Blob Storage")]
-        AZ_PrivateLink[("Private Link")]
-
-        AZ_VNet --> AZ_Subnet
-        AZ_Subnet --> AZ_LoadBalancer
-        AZ_LoadBalancer --> AZ_AppGateway
-        AZ_VNet --> AZ_VPNGateway
-        AZ_VNet --> AZ_BlobStorage
-        AZ_BlobStorage --> AZ_PrivateLink
-    end
-
-    %% ========== ONLINE STRATEGY ==========
-    subgraph Online["Online Migration (Physical Online)"]
-        direction TB
-        SrcDB[("Source DB\n(Primary)\nOCI Private Subnet")]
-        ZDM[("ZDM Service\n(zdmhost)\nOCI Private Subnet")]
-        DG[("Data Guard\nStandby\nAzure Subnet")]
-        TgtDB[("Target DB\n(ExaDB-D)\nAzure Subnet")]
-        App[("Application\nAzure Subnet")]
-
-        SrcDB -->|RMAN Backup| ZDM
-        ZDM -->|OCI Private Subnet| DG
-        DG -->|OCI-to-Azure VPN| TgtDB
-        TgtDB -->|Azure Internal LB| App
-    end
-
-    %% ========== OFFLINE STRATEGY ==========
-    subgraph Offline["Offline Migration (Physical Offline)"]
-        direction TB
-        SrcDB_Off[("Source DB\n(Shutdown)\nOCI Private Subnet")]
-        ZDM_Off[("ZDM Service\n(zdmhost)\nOCI Private Subnet")]
-        RMAN[("RMAN Backup\nOCI Object Storage")]
-        TgtDB_Off[("Target DB\n(ExaDB-D)\nAzure Subnet")]
-        App_Off[("Application\nAzure Subnet")]
-
-        SrcDB_Off -->|Shutdown| RMAN
-        RMAN -->|OCI Object Storage| ZDM_Off
-        ZDM_Off -->|Azure Blob Storage| TgtDB_Off
-        TgtDB_Off -->|Azure Internal LB| App_Off
-    end
-
-    %% ========== CONNECTIVITY ==========
-    OCI_PrivateSubnet -->|FastConnect/VPN| AZ_VNet
-    OCI_ObjectStorage -->|OCI Service Gateway| AZ_BlobStorage
-    OCI_PrivateSubnet -->|ZDM| Online
-    OCI_PrivateSubnet -->|ZDM| Offline
-    AZ_Subnet -->|Data Guard| Online
-    AZ_Subnet -->|Target DB| Online
-    AZ_Subnet -->|Target DB| Offline
-    AZ_Subnet -->|Application| Online
-    AZ_Subnet -->|Application| Offline
+    SRC_DB <==>|"5. Active Data Guard Redo Shipping (Port 1521 Bidirectional)"| CONN_CHANNEL
 ```
-
----
-
-### Architectural Components and Technical Details
-
-#### 1. Compute Layer Breakdown
-
-* **ZDM Service Host:** A dedicated Linux instance running the Oracle ZDM software (`zdmcli`). It handles execution logic, certificate handling, SSH orchestration, and execution status checking. It does not ingest or store database payload data.
-* **Source Host:** Contains the live production database. It must be running in `ARCHIVELOG` and `FORCE LOGGING` modes to support physical replication.
-* **Target Host:** Configured in the target ecosystem (such as Oracle Cloud Infrastructure, Exadata Database Service on Dedicated Infrastructure, or Exadata Database Service on Cloud@Customer/Azure). It contains a bare skeleton database environment matching the database version and patch level of the source before instantiation.
-
-#### 2. Network Connectivity Requirements
-
-* **Control Plane Routing (Port 22):** The ZDM Node requires direct, unhindered biographical SSH access (via SSH public key exchange) to the `opc`/`grid`/`oracle` OS users on both the source and target database hosts.
-* **Data Plane Transfer Routing (Port 1521):** Because this is a **Direct Data Transfer** configuration, data bypasses intermediate Cloud Object Storage buckets. Source and Target environments must have open bidirectional communication over SQL*Net TCP port 1521. This handles the direct active RMAN database cloning procedure and subsequent Oracle Data Guard traffic.
-
-#### 3. Storage Infrastructure
-
-* **Source End:** Standard production layout utilizing local filesystems, SAN/NAS layouts, or Oracle Automatic Storage Management (ASM).
-* **Target End:** Standardized Oracle Cloud Infrastructure storage layouts, utilizing high-performance **Oracle ASM Disk Groups** (`+DATA` for database blocks and data files, `+RECO` for fast recovery area logs, archiving, and flashback structures).
-
-#### 4. The Data Flow Execution Mechanics
-
-1. **Instantiation (RMAN Active Duplicate):** ZDM triggers RMAN on the target host to pull files directly over the network from the primary source database instance. The target environment builds its filesystem out of this stream, initiating the standby instance.
-2. **Online Synchronization (Oracle Data Guard):** Once the standby framework is established, Oracle Data Guard takes over. Redo data streams over port 1521 in real-time. The target remains in a mounting or read-only `Active Standby` status, continuously catching up to production transformations.
-3. **Switchover Integration:** When synchronization lag hits zero, ZDM performs a controlled switchover. Applications are temporarily drained, the source database transitions to a standby role, and the target infrastructure is promoted to the master primary production role with zero data loss.
-
-By the way, to unlock the full functionality of all Apps, enable [Gemini Apps Activity](https://myactivity.google.com/product/gemini).
