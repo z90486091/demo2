@@ -1,81 +1,98 @@
-#Mermaidjs for Oracle ZDM on Azure DBAS
+## ZDM Physical Migration to ExaDB-D on Oracle Database@Azure
+
+Two migration paths exist — the choice is driven entirely by whether production downtime is acceptable.
+
+**ONLINE** leverages Data Guard as the transport mechanism. The source stays live throughout; ZDM pulls data directly over SQL*Net using `RESTORE_FROM_SERVICE`, instantiates the target as a physical standby, and lets redo shipping close the gap before switchover. The optional `pauseafter ZDM_CONFIGURE_DG_SRC` holdpoint is critical in practice — it lets teams validate the standby, coordinate application cutover windows, and resume only when ready. Net downtime is effectively the switchover duration.
+
+**OFFLINE** trades downtime for simplicity. RMAN backs up the source to a shared NFS mount, the backup is restored at the target, and the target opens as primary — no standby, no redo shipping. The NVA is the key network dependency here; without it, NFS traffic cannot route between the on-premises network and the OCI delegated subnet inside the Azure VNet.
+
+**The NVA** sits in the Azure VNet for both modes but serves different purposes — primary routing for OFFLINE NFS traffic, backup path for ONLINE. It is not optional for OFFLINE.
+
+**The delegated subnet boundary** is where OCI and Azure meet. NSG controls access into the cluster; UDR controls how traffic is routed within the VNet before it reaches the subnet. VNICs are the attachment point between the Azure network plane and the OCI compute instances.
+
+**TDE is mandatory** in both modes regardless of whether the source is encrypted — a wallet must exist and be open. OFFLINE drops the additional requirement for `FORCE LOGGING` and `ARCHIVELOG` mode since there is no standby to feed.
 
 ```mermaid
-flowchart TB
-    %% Class Definitions for Styling
-    classDef compute fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#000;
-    classDef network fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000;
-    classDef zdm fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
-    classDef gateway fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
-
-    %% ON-PREMISES DATA CENTER NETWORK
-    subgraph ON_PREM_NW ["On-Premises Data Center Network"]
-        subgraph ON_PREM_COMPUTE ["On-Prem Compute Node Layer"]
-            ZDM_HOST["ZDM Service Host VM<br/>(Dedicated Linux Node)<br/>IP: aa.bb.cc.dd"]:::zdm
-            SRC_HOST["Primary DB Server Node<br/>(On-Prem Production Host)<br/>IP: aa.bb.sr.db"]:::compute
-            SRC_DB["Oracle Primary Database<br/>(FORCE LOGGING & ARCHIVELOG)<br/>DB_NAME: PROD"]:::compute
+graph TD
+    subgraph CDC["Customer Data Center (on-premises)"]
+        ZDM["ZDM Service Host\nOracle/RHEL Linux 8\n100 GB storage · RSA PEM SSH key"]
+        subgraph SRC["Source Database"]
+            SD["19.21 EE CDB · single-instance\nDB_NAME: oradb\nFORCE LOGGING · ARCHIVELOG · TDE · SPFILE"]
+            SS["ASM / local FS · TDE wallet"]
         end
-        
-        subgraph ON_PREM_NET ["On-Prem Network Config Matrix"]
-            SRC_LST["Local Listener (TNS)<br/>Static Port: 1521 / TCP"]:::network
-            SRC_HOST_FILE["Local /etc/hosts file<br/>Maps: Target IPs, Target SCAN,<br/>and Target VM hostnames"]:::network
-        end
-        
-        ZDM_HOST -.->|"Internal SSH Admin"| SRC_HOST
-        SRC_HOST --- SRC_DB
-        SRC_HOST --- SRC_LST
-        SRC_HOST --- SRC_HOST_FILE
+        SD --> SS
+        NFS["NFS File Share\nAzure Files · Oracle ACFS · Azure NetApp\nmounted on src + tgt · OFFLINE only"]
     end
 
-    %% HYBRID CONNECTIVITY TRANSIT TIER
-    subgraph HYBRID_LINK ["Hybrid Transit Network (Cross-Premises Bridge)"]
-        ON_PREM_FW["On-Premises Edge Firewall<br/>(Egress Rules: 22, 1521)"]:::gateway
-        CONN_CHANNEL{"Network Interconnect Pathway<br/>(Azure ExpressRoute Circuit<br/>OR Site-to-Site VPN)"}:::gateway
-        AZ_EDGE_FW["Azure NSG / Gateway Firewall<br/>(Ingress Rules: 22, 1521)"]:::gateway
-        
-        ON_PREM_FW <--> CONN_CHANNEL <--> AZ_EDGE_FW
+    subgraph NET["Network — both modes"]
+        UDR["Azure Route Table · UDR"]
+        NSG["OCI Network Security Group · NSG"]
+        NVA["Network Virtual Appliance · NVA\nOFFLINE: primary NFS routing\nONLINE: backup path"]
+        DSUB["Azure Delegated Subnet\nOCI-managed · PLATFORM_TYPE=EXACS"]
+        VNIC1["VNIC · Node 1"]
+        VNIC2["VNIC · Node 2"]
+        UDR --> NVA
+        UDR --> DSUB
+        NSG --> DSUB
+        DSUB --> VNIC1
+        DSUB --> VNIC2
     end
 
-    %% ORACLE DATABASE @ AZURE INFRASTRUCTURE
-    subgraph AZURE_CLOUD ["Microsoft Azure Cloud (VNet Framework)"]
-        subgraph AZURE_VNET ["Azure Virtual Network (VNet)"]
-            
-            subgraph DELEGATED_SUBNET ["Delegated Subnet to Oracle Database@Azure"]
-                TGT_SCAN["Cloud Virtual SCAN Listener<br/>(demo-scan-sample.oravcn...)<br/>Port: 1521 (SQL*Net)"]:::network
-                
-                subgraph TGT_CLUSTER ["Target ExaDB-D VM Cluster"]
-                    TGT_NODE1["ExaDB Target Node 1<br/>IP: ta.db.oa.1"]:::compute
-                    TGT_NODE2["ExaDB Target Node 2<br/>IP: ta.db.oa.2"]:::compute
-                    TGT_DB["Oracle Standby Database<br/>(Placeholder Template Instance<br/>DB_NAME: PROD)"]:::compute
-                end
-                
-                subgraph TGT_NET_CONFIG ["Target OS Local Routing"]
-                    TGT_HOST_FILE["Cluster Node /etc/hosts<br/>Maps: On-Prem Source IP<br/>& Hostname (All Nodes)"]:::network
-                end
-            end
-            
-            subgraph OCI_DNS_RES ["OCI Back-end Private VCN Network View"]
-                VCN_RESOLV["OCI Private DNS Resolver<br/>(Resolves Azure NFS Mounts / FQDN)"]:::network
-            end
+    subgraph AZ["Oracle Database@Azure · OCI co-located in Azure DC"]
+        subgraph VMCL["ExaDB-D VM Cluster · 2-node RAC 19.22"]
+            N1["Node 1"]
+            N2["Node 2"]
         end
-        
-        TGT_SCAN --> TGT_NODE1
-        TGT_SCAN --> TGT_NODE2
-        TGT_NODE1 --- TGT_DB
-        TGT_NODE2 --- TGT_DB
-        TGT_CLUSTER --- TGT_HOST_FILE
-        DELEGATED_SUBNET --- OCI_DNS_RES
+        TD["Target DB · oradb / oradb_exa\nSPFILE · TDE · SCAN :1521"]
+        TS["Exadata ASM · TDE wallet"]
+        VNIC1 --> N1
+        VNIC2 --> N2
+        N1 & N2 --> TD --> TS
     end
 
-    %% NETWORK TRAFFIC DIAGRAM FLOWS
-    %% Control Plane Traffic
-    ZDM_HOST ==>|"1. SSH Control (Port 22) via Transit"| ON_PREM_FW
-    AZ_EDGE_FW ==>|"2. Deliver SSH Packets to Node Vnics"| TGT_NODE1
-    AZ_EDGE_FW ==>|"2. Deliver SSH Packets to Node Vnics"| TGT_NODE2
+    subgraph ONLINE["ONLINE — Production · zero/negligible downtime"]
+        direction TB
+        OC1["MIGRATION_METHOD=ONLINE_PHYSICAL\nDATA_TRANSFER_MEDIUM=DIRECT\nRESTORE_FROM_SERVICE · no NFS required"]
+        OC2["Prechecks · Setup · Validate\nDiscover · CopyFiles · Prepare TGT · Setup TDE"]
+        OC3["ZDM_RESTORE_TGT\ndirect pull over SQL*Net · source stays UP"]
+        OC4["ZDM_RECOVER_TGT · ZDM_FINALIZE_TGT"]
+        OC5["ZDM_CONFIGURE_DG_SRC\nData Guard standby · redo shipping · MRP apply\n⏸ pauseafter available here"]
+        OC6["ZDM_SWITCHOVER_SRC · ZDM_SWITCHOVER_TGT\nsrc to PHYSICAL STANDBY · tgt to PRIMARY"]
+        OC7["Datapatch · Post-migrate · Cleanup"]
+        OC1 --> OC2 --> OC3 --> OC4 --> OC5 --> OC6 --> OC7
+    end
 
-    %% Data Plane Traffic
-    SRC_DB ==>|"3. RMAN Active Duplicate Stream (Port 1521)"| ON_PREM_FW
-    AZ_EDGE_FW ==>|"4. Direct Ingestion via Cloud SCAN"| TGT_SCAN
-    
-    SRC_DB <==>|"5. Active Data Guard Redo Shipping (Port 1521 Bidirectional)"| CONN_CHANNEL
+    subgraph OFFLINE["OFFLINE — Non-Production · downtime required"]
+        direction TB
+        FC1["MIGRATION_METHOD=OFFLINE_PHYSICAL\nDATA_TRANSFER_MEDIUM=NFS\nNFS share mounted on src + tgt"]
+        FC2["Prechecks · Setup · Validate"]
+        FC3["ZDM_BACKUP_SRC\nRMAN backup written to NFS"]
+        FC4["ZDM_TRANSFER_BACKUP\nbackup transferred via NFS · routed via NVA"]
+        FC5["ZDM_RESTORE_TGT\nRMAN restore from NFS · no Data Guard"]
+        FC6["ZDM_RECOVER_TGT · ZDM_FINALIZE_TGT"]
+        FC7["ZDM_SWITCHOVER_SRC · ZDM_SWITCHOVER_TGT\ntgt becomes PRIMARY"]
+        FC8["Datapatch · Post-migrate · Cleanup"]
+        FC1 --> FC2 --> FC3 --> FC4 --> FC5 --> FC6 --> FC7 --> FC8
+    end
+
+    ZDM -->|"SSH :22 · ONLINE control plane"| ONLINE
+    ZDM -->|"SSH :22 · OFFLINE control plane"| OFFLINE
+    ZDM -->|"SSH :22 · ONLINE to src"| SD
+    ZDM -->|"SSH :22 · OFFLINE to src"| SD
+    ZDM -->|"SSH :22 · ONLINE to tgt nodes"| N1
+    ZDM -->|"SSH :22 · ONLINE to tgt nodes"| N2
+    ZDM -->|"SSH :22 · OFFLINE to tgt nodes"| N1
+    ZDM -->|"SSH :22 · OFFLINE to tgt nodes"| N2
+
+    SD -->|"SQL*Net :1521 · ONLINE"| NET
+    SD -->|"SQL*Net :1521 · OFFLINE"| NET
+
+    SD -->|"OFFLINE: RMAN backup to NFS"| NFS
+    NFS -->|"OFFLINE: NFS traffic via NVA"| NVA
+
+    OC3 -->|"ONLINE: direct pull SQL*Net"| TD
+    OC5 -->|"ONLINE: redo shipping"| TD
+    OC6 -->|"ONLINE: cutover"| AZ
+    FC4 -->|"OFFLINE: NFS restore"| TD
+    FC7 -->|"OFFLINE: cutover"| AZ
 ```
