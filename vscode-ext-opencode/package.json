@@ -1,0 +1,54 @@
+{
+  "name": "watchdiff",
+  "displayName": "watchdiff",
+  "description": "Live file edit tracker - hooks into opencode SSE stream",
+  "version": "0.3.1",
+  "publisher": "watchdiff",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "watchdiff.toggle",
+        "title": "WatchDiff: Toggle Live Tracking"
+      },
+      {
+        "command": "watchdiff.openSettings",
+        "title": "WatchDiff: Open Settings"
+      }
+    ],
+    "configuration": {
+      "title": "WatchDiff",
+      "properties": {
+        "watchdiff.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable live file change tracking"
+        },
+        "watchdiff.watchDir": {
+          "type": "string",
+          "default": "",
+          "description": "Watch directory override (OPENCODE_WATCH_DIR). Defaults to VSCode workspace root"
+        },
+        "watchdiff.ports": {
+          "type": "array",
+          "items": { "type": "number" },
+          "default": [4096],
+          "description": "opencode server ports to connect to (e.g. [4096, 5096, 6096])"
+        },
+        "watchdiff.username": {
+          "type": "string",
+          "default": "",
+          "description": "opencode server Basic Auth username (OPENCODE_USER)"
+        },
+        "watchdiff.password": {
+          "type": "string",
+          "default": "",
+          "description": "opencode server Basic Auth password (OPENCODE_PASSWORD)"
+        }
+      }
+    }
+  }
+}
