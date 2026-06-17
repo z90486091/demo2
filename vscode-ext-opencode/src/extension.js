@@ -6,6 +6,7 @@ let statusBar;
 let connections = new Map();
 let decorationType;
 let decorationBlink;
+let ghostTextDecoration;
 
 function activate(context) {
   decorationBlink = vscode.window.createTextEditorDecorationType({
@@ -29,7 +30,12 @@ function activate(context) {
     borderColor: new vscode.ThemeColor('gitDecoration.addedResourceForeground'),
   });
 
+  ghostTextDecoration = vscode.window.createTextEditorDecorationType({
+    isWholeLine: true,
+  });
+
   context.subscriptions.push(decorationType);
+  context.subscriptions.push(ghostTextDecoration);
   context.subscriptions.push(statusBar);
 
   context.subscriptions.push(
@@ -167,7 +173,7 @@ function scheduleReconnect(port, delay) {
 
 function parseHunkRange(patch) {
   const matches = [...patch.matchAll(/@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@/gm)];
-  if (!matches.length) return { start: 0, end: 0, changedStart: 0, changedEnd: 0, changedRanges: [] };
+  if (!matches.length) return { start: 0, end: 0, changedStart: 0, changedEnd: 0, changedRanges: [], ghostOptions: [] };
 
   const hunkStart = parseInt(matches[0][1], 10) - 1;
   const count = parseInt(matches[0][2] ?? '1', 10);
@@ -178,6 +184,7 @@ function parseHunkRange(patch) {
 
   const lines = patch.split('\n');
   const changedRanges = [];
+  const ghostOptions = [];
   let currentLine = hunkStart;
 
   for (const line of lines) {
@@ -189,7 +196,33 @@ function parseHunkRange(patch) {
       continue;
     }
     if (line.startsWith('+') && !line.startsWith('+++')) {
-      changedRanges.push(new vscode.Range(currentLine, 0, currentLine, line.length));
+      const addedText = line.slice(1);
+      const range = new vscode.Range(currentLine, 0, currentLine, addedText.length);
+      changedRanges.push(range);
+      
+      // ghostOptions.push({
+      //   range: range,
+      //   renderOptions: {
+      //     after: {
+      //       contentText: addedText,
+      //       color: new vscode.ThemeColor('editorGhostText.foreground'),
+      //       fontStyle: 'italic'
+      //     }
+      //   }
+      // });
+      const insertionPreviewLine = Math.max(0, currentLine - 1);
+      ghostOptions.push({
+        range: new vscode.Range(insertionPreviewLine, 0, insertionPreviewLine, 0),
+        renderOptions: {
+          after: {
+            contentText: '  +  ' + addedText,
+            color: new vscode.ThemeColor('editorGhostText.foreground'),
+            fontStyle: 'italic',
+            margin: '0 0 0 16px',
+          }
+        }
+      });
+
       currentLine++;
     } else if (line.startsWith('-') && !line.startsWith('---')) {
       const prev = Math.max(0, currentLine - 1);
@@ -202,7 +235,7 @@ function parseHunkRange(patch) {
   const changedStart = changedRanges[0]?.start.line ?? hunkStart;
   const changedEnd = changedRanges[changedRanges.length - 1]?.end.line ?? hunkStart;
 
-  return { start: totalStart, end: totalEnd, changedStart, changedEnd, changedRanges };
+  return { start: totalStart, end: totalEnd, changedStart, changedEnd, changedRanges, ghostOptions };
 }
 
 function handleEvent(eventName, dataStr, port) {
@@ -217,9 +250,8 @@ function handleEvent(eventName, dataStr, port) {
     const patch = props?.metadata?.diff;
     const permissionId = props?.id;
     if (!filePath) return;
-    const { start, end, changedStart, changedEnd, changedRanges } = parseHunkRange(patch || '');
-    // navigateToEdit(filePath, start, end, changedStart, changedEnd, changedRanges, port);
-    navigateToEdit(filePath, start, end, changedStart, changedEnd, changedRanges, port, permissionId);
+    const { start, end, changedStart, changedEnd, changedRanges, ghostOptions } = parseHunkRange(patch || '');
+    navigateToEdit(filePath, start, end, changedStart, changedEnd, changedRanges, port, permissionId, ghostOptions);
     return;
   }
 
@@ -230,10 +262,10 @@ function handleEvent(eventName, dataStr, port) {
   const filePath = props?.path || props?.file || props?.filename || props?.filePath;
   const startLine = props?.start ?? props?.startLine ?? props?.line;
   const endLine = props?.end ?? props?.endLine;
-  if (filePath) navigateToEdit(filePath, startLine, endLine, null, null, [], port);
+  if (filePath) navigateToEdit(filePath, startLine, endLine, null, null, [], port, null, []);
 }
 
-async function navigateToEdit(filePath, startLine, endLine, changedStart, changedEnd, changedRanges = [], port, permissionId) {
+async function navigateToEdit(filePath, startLine, endLine, changedStart, changedEnd, changedRanges = [], port, permissionId, ghostOptions = []) {
   try {
     const uri = vscode.Uri.file(filePath);
     const doc = await vscode.workspace.openTextDocument(uri);
@@ -245,6 +277,18 @@ async function navigateToEdit(filePath, startLine, endLine, changedStart, change
 
     editor.revealRange(hunkRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     editor.setDecorations(decorationType, changedRanges.length ? changedRanges : [hunkRange]);
+    
+    if (ghostOptions.length > 0) {
+      // editor.setDecorations(ghostTextDecoration, ghostOptions);
+      // Filter out any ghost ranges that point past the current doc end
+      // (permission.asked fires before the file is written)
+      const safeGhostOptions = ghostOptions.filter(
+        g => g.range.start.line < doc.lineCount
+      );
+      if (safeGhostOptions.length > 0) {
+        editor.setDecorations(ghostTextDecoration, safeGhostOptions);
+      }
+    }
 
     let changedRange;
     if (changedStart != null && changedStart >= 0) {
@@ -267,6 +311,7 @@ async function navigateToEdit(filePath, startLine, endLine, changedStart, change
 
     setTimeout(() => {
       editor.setDecorations(decorationType, []);
+      editor.setDecorations(ghostTextDecoration, []);
       clearInterval(interval);
       editor.setDecorations(decorationBlink, []);
 
