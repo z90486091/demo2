@@ -23,15 +23,19 @@ http.createServer(async (req, res) => {
         'user-agent': req.headers['user-agent'] || 'Mozilla/5.0'
       },
       body,
-      // signal: AbortSignal.timeout(15000)
     });
 
-    res.writeHead(upstream.status, Object.fromEntries(upstream.headers));
-    const reader = upstream.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(value);
+    const headers = Object.fromEntries(upstream.headers);
+    delete headers['content-length'];
+    res.writeHead(upstream.status, headers);
+
+    if (upstream.body) {
+      const reader = upstream.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
     }
     return res.end();
   } catch (err) {
