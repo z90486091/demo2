@@ -1,9 +1,15 @@
 import http from 'http';
+import { Readable, Transform } from 'stream';
 
 const TARGET_API = 'https://opencode.ai/zen/v1';
 
 http.createServer(async (req, res) => {
   const target = `${TARGET_API}${req.url}`;
+  const start = Date.now();
+  
+  const headers = { ...req.headers };
+  delete headers.host;
+
   const body = ['GET', 'HEAD'].includes(req.method) 
     ? null 
     : await new Promise(r => {
@@ -12,37 +18,76 @@ http.createServer(async (req, res) => {
         req.on('end', () => r(Buffer.concat(c)));
       });
 
+  // Setup a 10-second timeout to prevent infinite hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
   try {
-    console.log(`Routing directly to: ${target}`);
+    console.log(`\n[REQ] ${req.method} -> ${target}`);
+    
     const upstream = await fetch(target, {
       method: req.method,
-      headers: { 
-        'content-type': req.headers['content-type'],  
-        'authorization': req.headers['authorization'],  
-        'accept': req.headers['accept'] || '*/*',  
-        'user-agent': req.headers['user-agent'] || 'Mozilla/5.0'
-      },
+      headers,
       body,
+      duplex: body ? 'half' : undefined,
+      signal: controller.signal
     });
 
-    const headers = Object.fromEntries(upstream.headers);
-    delete headers['content-length'];
-    res.writeHead(upstream.status, headers);
+    clearTimeout(timeoutId);
+    const duration = Date.now() - start;
+
+    // Check if OpenCodeAI returned a server error code
+    if (upstream.status >= 500) {
+      console.error(`[OUTAGE] OpenCodeAI returned HTTP ${upstream.status} (Server Error)`);
+    } else {
+      console.log(`[RES] Status: ${upstream.status} | Time: ${duration}ms`);
+    }
+
+    const respHeaders = Object.fromEntries(upstream.headers);
+    delete respHeaders['content-length'];
+    res.writeHead(upstream.status, respHeaders);
 
     if (upstream.body) {
-      const reader = upstream.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
+      let buffer = '';
+      const metricTracker = new Transform({
+        transform(chunk, encoding, callback) {
+          buffer += chunk.toString();
+          let lineBreak;
+          while ((lineBreak = buffer.indexOf('\n')) !== -1) {
+            const line = buffer.substring(0, lineBreak).trim();
+            buffer = buffer.substring(lineBreak + 1);
+            if (line.startsWith('data:')) {
+              const strData = line.replace(/^data:\s*/, '');
+              if (strData === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(strData);
+                if (parsed.usage) {
+                  const { prompt_tokens, completion_tokens, total_tokens } = parsed.usage;
+                  console.log(`[TOKENS] Prompt: ${prompt_tokens} | Completion: ${completion_tokens} | Total: ${total_tokens}`);
+                }
+              } catch {}
+            }
+          }
+          callback(null, chunk);
+        }
+      });
+      Readable.fromWeb(upstream.body).pipe(metricTracker).pipe(res);
+    } else {
+      res.end();
     }
-    return res.end();
   } catch (err) {
-    console.error(`\n[FAIL]: ${err.message}`);
+    clearTimeout(timeoutId);
+    
+    // Distinguish between timeout and network routing failures
+    if (err.name === 'AbortError') {
+      console.error(`[OUTAGE] OpenCodeAI timed out after 10 seconds.`);
+    } else {
+      console.error(`[OUTAGE] OpenCodeAI network connection failed: ${err.message}`);
+    }
+
     if (!res.headersSent) {
-      res.writeHead(502, { 'Content-Type': 'text/plain' });
-      res.end(`Bad Gateway: ${err.message}`);
+      res.writeHead(504, { 'Content-Type': 'text/plain' });
+      res.end(`Gateway Error: OpenCodeAI is unreachable.`);
     }
   }
-}).listen(7860, () => console.log('Local Proxy running on port 7860'));
+}).listen(7860, () => console.log('Diagnostic Proxy running on port 7860'));
