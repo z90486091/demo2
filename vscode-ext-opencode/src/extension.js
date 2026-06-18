@@ -187,9 +187,38 @@ function parseHunkRange(patch) {
   const ghostOptions = [];
   let currentLine = hunkStart;
 
+  // Consecutive '+' lines are buffered and anchored to a SINGLE preceding
+  // line (the last real line before the run starts), instead of each line
+  // advancing its own anchor by one. Previously each added line anchored
+  // itself one line further down than the last, which only happens to be
+  // correct for the first line in a run.
+  let ghostBuffer = [];
+  let ghostAnchorLine = null;
+
+  const flushGhostBuffer = () => {
+    if (!ghostBuffer.length) return;
+    ghostOptions.push({
+      range: new vscode.Range(ghostAnchorLine, 0, ghostAnchorLine, 0),
+      renderOptions: {
+        after: {
+          // U+2028 (line separator) + forced 'pre' whitespace lets a single
+          // decoration render multiple stacked lines of ghost text.
+          contentText: ghostBuffer.map(t => '  +  ' + t).join('\u2028'),
+          color: new vscode.ThemeColor('editorGhostText.foreground'),
+          fontStyle: 'italic',
+          margin: '0 0 0 16px',
+          textDecoration: 'none; white-space: pre;',
+        }
+      }
+    });
+    ghostBuffer = [];
+    ghostAnchorLine = null;
+  };
+
   for (const line of lines) {
     const match = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@/);
     if (match) {
+      flushGhostBuffer();
       currentLine = parseInt(match[1], 10) - 1;
       const cnt = parseInt(match[2] ?? '1', 10);
       totalEnd = currentLine + Math.max(cnt - 1, 0);
@@ -199,38 +228,21 @@ function parseHunkRange(patch) {
       const addedText = line.slice(1);
       const range = new vscode.Range(currentLine, 0, currentLine, addedText.length);
       changedRanges.push(range);
-      
-      // ghostOptions.push({
-      //   range: range,
-      //   renderOptions: {
-      //     after: {
-      //       contentText: addedText,
-      //       color: new vscode.ThemeColor('editorGhostText.foreground'),
-      //       fontStyle: 'italic'
-      //     }
-      //   }
-      // });
-      const insertionPreviewLine = Math.max(0, currentLine - 1);
-      ghostOptions.push({
-        range: new vscode.Range(insertionPreviewLine, 0, insertionPreviewLine, 0),
-        renderOptions: {
-          after: {
-            contentText: '  +  ' + addedText,
-            color: new vscode.ThemeColor('editorGhostText.foreground'),
-            fontStyle: 'italic',
-            margin: '0 0 0 16px',
-          }
-        }
-      });
+
+      if (ghostAnchorLine === null) ghostAnchorLine = Math.max(0, currentLine - 1);
+      ghostBuffer.push(addedText);
 
       currentLine++;
     } else if (line.startsWith('-') && !line.startsWith('---')) {
+      flushGhostBuffer();
       const prev = Math.max(0, currentLine - 1);
       changedRanges.push(new vscode.Range(prev, 0, currentLine, 0));
     } else if (line.startsWith(' ') || (line.length > 0 && !line.startsWith('\\') && !line.startsWith('-') && !line.startsWith('+'))) {
+      flushGhostBuffer();
       currentLine++;
     }
   }
+  flushGhostBuffer();
 
   const changedStart = changedRanges[0]?.start.line ?? hunkStart;
   const changedEnd = changedRanges[changedRanges.length - 1]?.end.line ?? hunkStart;
@@ -251,6 +263,17 @@ function handleEvent(eventName, dataStr, port) {
     const permissionId = props?.id;
     if (!filePath) return;
     const { start, end, changedStart, changedEnd, changedRanges, ghostOptions } = parseHunkRange(patch || '');
+
+    // Diagnostic: confirm whether ghostOptions is actually populated coming
+    // out of parseHunkRange, vs. dropped later in navigateToEdit. Check
+    // Output > Extension Host (or Help > Toggle Developer Tools > Console)
+    // for these lines. Remove once confirmed.
+    console.log(
+      '[watchdiff] permission.asked patch length:', (patch || '').length,
+      '| changedRanges:', changedRanges.length,
+      '| ghostOptions:', ghostOptions.length
+    );
+
     navigateToEdit(filePath, start, end, changedStart, changedEnd, changedRanges, port, permissionId, ghostOptions);
     return;
   }
@@ -277,17 +300,27 @@ async function navigateToEdit(filePath, startLine, endLine, changedStart, change
 
     editor.revealRange(hunkRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
     editor.setDecorations(decorationType, changedRanges.length ? changedRanges : [hunkRange]);
-    
+
     if (ghostOptions.length > 0) {
-      // editor.setDecorations(ghostTextDecoration, ghostOptions);
-      // Filter out any ghost ranges that point past the current doc end
-      // (permission.asked fires before the file is written)
-      const safeGhostOptions = ghostOptions.filter(
-        g => g.range.start.line < doc.lineCount
-      );
-      if (safeGhostOptions.length > 0) {
-        editor.setDecorations(ghostTextDecoration, safeGhostOptions);
-      }
+      // Previously this FILTERED OUT (dropped entirely) any ghost option
+      // whose anchor line was >= doc.lineCount, e.g. when the diff's line
+      // numbers assume edits/insertions that haven't been written to disk
+      // yet (permission.asked fires before the file is updated). That is
+      // the one place ghost decorations are treated differently from the
+      // highlight decorations above, which have no such filter and get
+      // silently clamped by VS Code instead. Clamping here too means
+      // ghost text still renders (on the last valid line) instead of
+      // vanishing completely.
+      const safeGhostOptions = ghostOptions.map(g => {
+        const clampedLine = Math.min(g.range.start.line, Math.max(0, doc.lineCount - 1));
+        if (clampedLine === g.range.start.line) return g;
+        return {
+          ...g,
+          range: new vscode.Range(clampedLine, 0, clampedLine, 0),
+        };
+      });
+      console.log('[watchdiff] applying ghost decorations:', safeGhostOptions.length, 'of', ghostOptions.length);
+      editor.setDecorations(ghostTextDecoration, safeGhostOptions);
     }
 
     let changedRange;
