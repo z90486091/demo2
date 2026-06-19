@@ -1,92 +1,81 @@
 import http from 'http';
-import { Readable } from 'stream';
-import { Agent } from 'undici';
+import https from 'https';
+import { Transform } from 'stream';
 
-const TARGET_API = process.env.TARGET_API || 'https://opencode.ai/zen/v1';
-const PORT = Number(process.env.PORT || 7860);
+const TARGET_API = 'https://opencode.ai/zen/v1';
 
-// native fetch() ignores the node-style `agent` option entirely.
-// the correct way to control pooling is `dispatcher`, passed an undici.Agent.
-const dispatcher = new Agent({ keepAliveTimeout: 30000, connections: 256 });
-
-http.createServer(async (req, res) => {
-  req.socket.setNoDelay(true);
-  res.socket.setNoDelay(true);
-
+http.createServer((req, res) => {
   const target = `${TARGET_API}${req.url}`;
+  const start = Date.now();
+  
   const headers = { ...req.headers };
   delete headers.host;
-  const body = ['GET', 'HEAD'].includes(req.method) ? null : req;
 
   const controller = new AbortController();
-  let timeoutId = setTimeout(() => controller.abort(), 30000);
-  const bumpTimeout = () => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => controller.abort(), 30000);
-  };
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-  try {
-    const start = Date.now()
-    console.log(`[REQ] ${new Date().toISOString()}: ${req.method} -> ${target}`);
-    const upstream = await fetch(target, {
-      method: req.method,
-      headers,
-      body,
-      duplex: body ? 'half' : undefined,
-      dispatcher,
-      signal: controller.signal
+  console.log(`\n[REQ] ${req.method} -> ${target}`);
+  
+  const upstreamReq = https.request(target, {
+    method: req.method,
+    headers,
+    signal: controller.signal
+  }, (upstreamRes) => {
+    clearTimeout(timeoutId);
+    const duration = Date.now() - start;
+
+    if (upstreamRes.statusCode >= 500) {
+      console.error(`[OUTAGE] OpenCodeAI returned HTTP ${upstreamRes.statusCode} (Server Error)`);
+    } else {
+      console.log(`[RES] Status: ${upstreamRes.statusCode} | Time: ${duration}ms`);
+    }
+
+    const respHeaders = { ...upstreamRes.headers };
+    delete respHeaders['content-length'];
+    res.writeHead(upstreamRes.statusCode, respHeaders);
+
+    let buffer = '';
+    const metricTracker = new Transform({
+      transform(chunk, encoding, callback) {
+        buffer += chunk.toString();
+        let lineBreak;
+        while ((lineBreak = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.substring(0, lineBreak).trim();
+          buffer = buffer.substring(lineBreak + 1);
+          if (line.startsWith('data:')) {
+            const strData = line.replace(/^data:\s*/, '');
+            if (strData !== '[DONE]') {
+              try {
+                const parsed = JSON.parse(strData);
+                if (parsed.usage) {
+                  const { prompt_tokens, completion_tokens, total_tokens } = parsed.usage;
+                  console.log(`[TOKENS] Prompt: ${prompt_tokens} | Completion: ${completion_tokens} | Total: ${total_tokens}`);
+                }
+              } catch {}
+            }
+          }
+        }
+        callback(null, chunk);
+      }
     });
 
-    const duration = Date.now() - start;
-    if (upstream.status >= 500) {
-      console.error(`[OUTAGE] upstream returned HTTP ${upstream.status} (Server Error)`);
-    } else {
-      console.log(`[RES] Status: ${upstream.status} | Time: ${duration}ms`);
-    }
+    upstreamRes.pipe(metricTracker).pipe(res);
+  });
 
-    const respHeaders = Object.fromEntries(upstream.headers);
-    delete respHeaders['content-length'];
-    delete respHeaders['content-encoding'];
-    delete respHeaders['transfer-encoding'];
-    res.writeHead(upstream.status, respHeaders);
-
-    if (upstream.body) {
-      let buf = '';
-      const tokenRe = /"prompt_tokens":(\d+).*?"completion_tokens":(\d+).*?"total_tokens":(\d+)/;
-      const node = Readable.fromWeb(upstream.body);
-
-      node.on('data', chunk => {
-        bumpTimeout();
-        res.write(chunk);
-        buf += chunk;
-        const m = tokenRe.exec(buf);
-        if (m) { 
-          console.log(`[TOKENS] Prompt: ${m[1]} | Completion: ${m[2]} | Total: ${m[3]}`);
-          buf = ''; 
-        }
-        else if (buf.length > 2000) { buf = buf.slice(-500); }
-      });
-
-      node.on('end', () => { clearTimeout(timeoutId); res.end(); });
-      node.on('error', () => { 
-        clearTimeout(timeoutId); 
-        console.error(`[OUTAGE] Stream error: ${err.message}`);
-        res.end(); 
-      });
-    } else {
-      clearTimeout(timeoutId);
-      res.end();
-    }
-  } catch (err) {
+  upstreamReq.on('error', (err) => {
     clearTimeout(timeoutId);
+    
     if (err.name === 'AbortError') {
-      console.error(`[OUTAGE] Upstream timed out (30s idle).`);
+      console.error(`[OUTAGE] OpenCodeAI timed out after 30 seconds.`);
     } else {
-      console.error(`[OUTAGE] Network connection failed: ${err.message}`);
+      console.error(`[OUTAGE] OpenCodeAI network connection failed: ${err.message}`);
     }
+
     if (!res.headersSent) {
       res.writeHead(504, { 'Content-Type': 'text/plain' });
-      res.end('Gateway Error: OpenCodeAI is unreachable.');
+      res.end(`Gateway Error: OpenCodeAI is unreachable.`);
     }
-  }
-}).listen(PORT, () => console.log(`[proxy-v4-corrected] listening on ${PORT} -> ${TARGET_API}`));
+  });
+
+  req.pipe(upstreamReq);
+}).listen(7860, () => console.log('Diagnostic Proxy running on port 7860'));
