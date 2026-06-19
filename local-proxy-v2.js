@@ -14,7 +14,7 @@ http.createServer((req, res) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-  console.log(`\n[REQ] ${req.method} -> ${target}`);
+  console.log(`\n[REQ] ${new Date().toISOString()} ${req.method} -> ${target}`);
   
   const upstreamReq = https.request(target, {
     method: req.method,
