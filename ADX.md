@@ -1,4 +1,3 @@
-
 TLDR: Latency rules are auto-configured. For custom metric counts, you must manually create a Health Rule using static thresholds.
 
 DROP TLDR FOR NOW
@@ -1606,3 +1605,743 @@ YES. The adxSchemaScript resource inside main.bicep automates the table creation
 WHAT ABT ADX DB CREATION
 
 It is automatically handled in main.bicep by the Microsoft.Kusto/clusters/databases resource (adxDatabase), which provisions the database before the script runs.
+
+WHAT ARE THE FILES THAT NEED TO BE IN MY NEW GH REPO FOR THIS E2E CODE SOLUTION?
+Plaintext
+
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── main.bicep
+└── telegraf.conf
+
+WHAT ARE THE AZURE PRE-REQUISITES FOR SUCCESSFUL RUN? AZ SUBSCRIPTION?
+
+Active Azure subscription, target Resource Group, and a Service Principal with Contributor role mapped to GitHub Secrets for OIDC authentication.
+
+WHY DOESNT THE MAIN.BICEP CREATE THE RG?
+
+The template targets a resource group scope. Creating an RG requires a subscription-level scope deployment (targetScope = 'subscription').
+
+WHAT SCOPE DOES CURRENT MAIN.BICEP USE?
+
+It uses the resourceGroup scope, which is the default Bicep scope when no targetScope is explicitly defined.
+
+SO THEN UPDAET THE MAIN.BICEP CODE TO USE TARGETSCOPE=SUBSCRIPTION
+
+To shift to a subscription scope, Bicep requires a two-file modular structure: main.bicep (creates the Resource Group) and infra.bicep (provisions the resources inside that group).
+1. main.bicep (Subscription Scope)
+Code snippet
+
+targetScope = 'subscription'
+
+param location string = 'eastus'
+param rgName string = 'AppD-Analytics-RG'
+param prefix string = 'appdmetrics'
+
+// Provision the Resource Group
+resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: rgName
+  location: location
+}
+
+// Deploy all resources into the newly created Resource Group
+module infra './infra.bicep' = {
+  name: 'infraDeployment'
+  scope: rg
+  params: {
+    location: location
+    prefix: prefix
+  }
+}
+
+output storageAccountName string = infra.outputs.storageAccountName
+
+2. infra.bicep (Resource Group Scope)
+Code snippet
+
+param location string
+param prefix string
+
+// Storage Account for Telegraf Mounting
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: '${prefix}store${uniqueString(resourceGroup().id)}'
+  location: location
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+}
+
+resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: fileServices
+  name: 'telegraf-config-share'
+}
+
+// Ingestion Event Hub
+resource ehNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
+  name: '${prefix}-ehns'
+  location: location
+  sku: { name: 'Standard', capacity: 1 }
+}
+
+resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
+  parent: ehNamespace
+  name: 'metrics-topic'
+  properties: { messageRetentionInDays: 1, partitionCount: 2 }
+}
+
+resource ehAuthRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2024-01-01' = {
+  parent: eventHub
+  name: 'TelegrafListenSend'
+  properties: { rights: [ 'Listen', 'Send' ] }
+}
+
+resource adxConsumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-01-01' = {
+  parent: eventHub
+  name: 'adx-consumer'
+}
+
+// ADX Cluster
+resource adxCluster 'Microsoft.Kusto/clusters@2023-08-15' = {
+  name: '${prefix}adx${uniqueString(resourceGroup().id)}'
+  location: location
+  sku: { name: 'Standard_E2ads_v5', tier: 'Standard', capacity: 2 }
+  identity: { type: 'SystemAssigned' }
+}
+
+// ADX Database
+resource adxDatabase 'Microsoft.Kusto/clusters/databases@2023-08-15' = {
+  parent: adxCluster
+  name: 'AppDynamicsTelemetry'
+  location: location
+  kind: 'ReadWrite'
+  properties: {
+    softDeletePeriod: 'P7D'
+    hotCachePeriod: 'P1D'
+  }
+}
+
+// KQL Schema Automation Script
+resource adxSchemaScript 'Microsoft.Kusto/clusters/databases/scripts@2023-08-15' = {
+  parent: adxDatabase
+  name: 'AppDMetricsSchemaDeployment'
+  properties: {
+    scriptContent: '''
+.create table AppDMetrics (Timestamp: datetime, ApplicationName: string, TierName: string, MetricPath: string, MetricName: string, MetricValue: real)
+.create table AppDMetrics ingestion json mapping "AppDMetricsMapping" '[{"column":"Timestamp", "Properties":{"Path":"$.timestamp"}},{"column":"ApplicationName", "Properties":{"Path":"$.app"}},{"column":"TierName", "Properties":{"Path":"$.tier"}},{"column":"MetricPath", "Properties":{"Path":"$.path"}},{"column":"MetricName", "Properties":{"Path":"$.metric_name"}},{"column":"MetricValue", "Properties":{"Path":"$.value"}}]'
+.alter table AppDMetrics policy streamingingestion enabled
+'''
+    continueOnErrors: false
+    forceUpdateTag: 'v1'
+  }
+}
+
+// Data Connection Link
+resource adxDataConnection 'Microsoft.Kusto/clusters/databases/dataConnections@2023-08-15' = {
+  parent: adxDatabase
+  name: 'EventHubIngestConnection'
+  location: location
+  kind: 'EventHub'
+  properties: {
+    eventHubResourceId: eventHub.id
+    consumerGroup: adxConsumerGroup.name
+    tableName: 'AppDMetrics'
+    dataFormat: 'MULTIJSON'
+    mappingRuleName: 'AppDMetricsMapping'
+  }
+  dependsOn: [ adxSchemaScript ]
+}
+
+// Container Apps Runtime Env
+resource acaEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: '${prefix}-aca-env'
+  location: location
+}
+
+resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  parent: acaEnv
+  name: 'telegraf-storage-mount'
+  properties: {
+    azureFile: {
+      accountName: storage.name
+      accountKey: storage.listKeys().keys[0].value
+      shareName: fileShare.name
+      accessMode: 'ReadOnly'
+    }
+  }
+}
+
+// Telegraf Worker Container
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: 'appd-telegraf-worker'
+  location: location
+  properties: {
+    managedEnvironmentId: acaEnv.id
+    configuration: { activeRevisionsMode: 'Single' }
+    template: {
+      containers: [
+        {
+          name: 'telegraf'
+          image: 'telegraf:latest'
+          resources: { cpu: json('0.5'), memory: '1.0Gi' }
+          volumeMounts: [ { volumeName: 'config-vol', mountPath: '/etc/telegraf' } ]
+        }
+      ]
+      volumes: [
+        {
+          name: 'config-vol'
+          storageType: 'AzureFile'
+          storageName: 'telegraf-storage-mount'
+        }
+      ]
+    }
+  }
+  dependsOn: [ acaEnvStorage ]
+}
+
+output storageAccountName string = storage.name
+
+UPDATE ALL THE E2E CODE IN ONE SHOT, NO MISTAKES, SO I CAN CREATE A NEW GH REPO
+.github/workflows/deploy.yml
+YAML
+
+name: E2E Azure Telemetry Deployment Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: "AppD-Analytics-RG"
+  LOCATION: "eastus"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Azure OIDC Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Subscription Infrastructure (Bicep)
+        id: bicep_deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scope: subscription
+          region: ${{ env.LOCATION }}
+          template: ./main.bicep
+          parameters: rgName=${{ env.RESOURCE_GROUP }} location=${{ env.LOCATION }}
+
+      - name: Sync Telegraf Configuration to Azure Files
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            STORAGE_NAME=$(echo '${{ steps.bicep_deploy.outputs.storageAccountName.value }}' | tr -d '"')
+            STORAGE_KEY=$(az storage account keys list --resource-group ${{ env.RESOURCE_GROUP }} --account-name "$STORAGE_NAME" --query "[0].value" -o tsv)
+            
+            az storage file upload \
+              --account-name "$STORAGE_NAME" \
+              --account-key "$STORAGE_KEY" \
+              --share-name "telegraf-config-share" \
+              --source "./telegraf.conf" \
+              --path "telegraf.conf"
+
+      - name: Restart Container App Worker Pod
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az containerapp revision restart \
+              --name "appd-telegraf-worker" \
+              --resource-group ${{ env.RESOURCE_GROUP }}
+
+main.bicep
+Code snippet
+
+targetScope = 'subscription'
+
+param location string = 'eastus'
+param rgName string = 'AppD-Analytics-RG'
+param prefix string = 'appdmetrics'
+
+resource rg 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: rgName
+  location: location
+}
+
+module infra './infra.bicep' = {
+  name: 'infraDeployment'
+  scope: rg
+  params: {
+    location: location
+    prefix: prefix
+  }
+}
+
+output storageAccountName string = infra.outputs.storageAccountName
+
+infra.bicep
+Code snippet
+
+param location string
+param prefix string
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: '${prefix}store${uniqueString(resourceGroup().id)}'
+  location: location
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+}
+
+resource fileServices 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: fileServices
+  name: 'telegraf-config-share'
+}
+
+resource ehNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = {
+  name: '${prefix}-ehns'
+  location: location
+  sku: { name: 'Standard', capacity: 1 }
+}
+
+resource eventHub 'Microsoft.EventHub/namespaces/eventhubs@2024-01-01' = {
+  parent: ehNamespace
+  name: 'metrics-topic'
+  properties: { messageRetentionInDays: 1, partitionCount: 2 }
+}
+
+resource ehAuthRule 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2024-01-01' = {
+  parent: eventHub
+  name: 'TelegrafListenSend'
+  properties: { rights: [ 'Listen', 'Send' ] }
+}
+
+resource adxConsumerGroup 'Microsoft.EventHub/namespaces/eventhubs/consumergroups@2024-01-01' = {
+  parent: eventHub
+  name: 'adx-consumer'
+}
+
+resource adxCluster 'Microsoft.Kusto/clusters@2023-08-15' = {
+  name: '${prefix}adx${uniqueString(resourceGroup().id)}'
+  location: location
+  sku: { name: 'Standard_E2ads_v5', tier: 'Standard', capacity: 2 }
+  identity: { type: 'SystemAssigned' }
+}
+
+resource adxDatabase 'Microsoft.Kusto/clusters/databases@2023-08-15' = {
+  parent: adxCluster
+  name: 'AppDynamicsTelemetry'
+  location: location
+  kind: 'ReadWrite'
+  properties: {
+    softDeletePeriod: 'P7D'
+    hotCachePeriod: 'P1D'
+  }
+}
+
+resource adxSchemaScript 'Microsoft.Kusto/clusters/databases/scripts@2023-08-15' = {
+  parent: adxDatabase
+  name: 'AppDMetricsSchemaDeployment'
+  properties: {
+    scriptContent: '''
+.create table AppDMetrics (Timestamp: datetime, ApplicationName: string, TierName: string, MetricPath: string, MetricName: string, MetricValue: real)
+.create table AppDMetrics ingestion json mapping "AppDMetricsMapping" '[{"column":"Timestamp", "Properties":{"Path":"$.timestamp"}},{"column":"ApplicationName", "Properties":{"Path":"$.app"}},{"column":"TierName", "Properties":{"Path":"$.tier"}},{"column":"MetricPath", "Properties":{"Path":"$.path"}},{"column":"MetricName", "Properties":{"Path":"$.metric_name"}},{"column":"MetricValue", "Properties":{"Path":"$.value"}}]'
+.alter table AppDMetrics policy streamingingestion enabled
+'''
+    continueOnErrors: false
+    forceUpdateTag: 'v1'
+  }
+}
+
+resource adxDataConnection 'Microsoft.Kusto/clusters/databases/dataConnections@2023-08-15' = {
+  parent: adxDatabase
+  name: 'EventHubIngestConnection'
+  location: location
+  kind: 'EventHub'
+  properties: {
+    eventHubResourceId: eventHub.id
+    consumerGroup: adxConsumerGroup.name
+    tableName: 'AppDMetrics'
+    dataFormat: 'MULTIJSON'
+    mappingRuleName: 'AppDMetricsMapping'
+  }
+  dependsOn: [ adxSchemaScript ]
+}
+
+resource acaEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: '${prefix}-aca-env'
+  location: location
+}
+
+resource acaEnvStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  parent: acaEnv
+  name: 'telegraf-storage-mount'
+  properties: {
+    azureFile: {
+      accountName: storage.name
+      accountKey: storage.listKeys().keys[0].value
+      shareName: fileShare.name
+      accessMode: 'ReadOnly'
+    }
+  }
+}
+
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: 'appd-telegraf-worker'
+  location: location
+  properties: {
+    managedEnvironmentId: acaEnv.id
+    configuration: { activeRevisionsMode: 'Single' }
+    template: {
+      containers: [
+        {
+          name: 'telegraf'
+          image: 'telegraf:latest'
+          resources: { cpu: json('0.5'), memory: '1.0Gi' }
+          volumeMounts: [ { volumeName: 'config-vol', mountPath: '/etc/telegraf' } ]
+        }
+      ]
+      volumes: [
+        {
+          name: 'config-vol'
+          storageType: 'AzureFile'
+          storageName: 'telegraf-storage-mount'
+        }
+      ]
+    }
+  }
+  dependsOn: [ acaEnvStorage ]
+}
+
+output storageAccountName string = storage.name
+
+telegraf.conf
+Ini, TOML
+
+[agent]
+  interval = "60s"
+  round_interval = true
+  metric_batch_size = 5000
+  metric_buffer_limit = 100000
+  flush_interval = "10s"
+  precision = "ms"
+
+[[inputs.http]]
+  urls = ["https://${APPD_HOST}/controller/rest/applications/${APPD_APP}/metric-data?metric-path=Application%20Infrastructure%20Performance%7C*&time-range-type=BEFORE_NOW&duration-in-mins=2&output=JSON"]
+  method = "GET"
+  username = "${APPD_USER}"
+  password = "${APPD_PASSWORD}"
+  timeout = "15s"
+  data_format = "json_v2"
+
+  [[inputs.http.json_v2]]
+    [[inputs.http.json_v2.object]]
+      path = "$"
+      tags = ["metricName", "metricPath"]
+      [[inputs.http.json_v2.object.object]]
+        path = "metricValues"
+        fields = ["value"]
+
+[[outputs.kafka]]
+  brokers = ["${EVENTHUB_NAMESPACE}.servicebus.windows.net:9093"]
+  topic = "${EVENTHUB_NAME}"
+  compression_codec = 1
+  required_acks = 1
+  sasl_mechanism = "PLAIN"
+  sasl_username = "$ConnectionString"
+  sasl_password = "${EVENTHUB_CONNECTION_STRING}"
+  tls_ca = "/etc/ssl/certs/ca-certificates.crt"
+
+NEED A README.MD AND AGENTS.MD FOR THIS GH REPO
+README.md
+Markdown
+
+# AppDynamics to Azure Data Explorer (ADX) Telemetry Pipeline
+
+Automated serverless metrics ingestion pipeline leveraging Telegraf hosted on Azure Container Apps (ACA), streaming via Event Hubs into Azure Data Explorer (ADX).
+
+## Architecture Flow
+```text
+AppDynamics REST API ➔ Telegraf (Azure Container Apps) ➔ Azure Event Hubs (Kafka Interface) ➔ Azure Data Explorer (ADX)
+
+Repository Tree
+Plaintext
+
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml    # GitHub Actions CI/CD Orchestration
+├── main.bicep            # Subscription-Scope Deployment Manifest
+├── infra.bicep           # Resource Group-Scope Infrastructure Resources
+└── telegraf.conf         # Telegraf Agent Metric Collection Profile
+
+Required Azure Pre-requisites
+
+Ensure an active Azure Subscription exists and seed your GitHub repository with the following GitHub Actions Secrets for OpenID Connect (OIDC) authentication:
+
+    AZURE_CLIENT_ID — Application (client) ID of your deployment Service Principal.
+
+    AZURE_TENANT_ID — Directory (tenant) ID of your Azure Active Directory.
+
+    AZURE_SUBSCRIPTION_ID — Target Subscription ID.
+
+Automated Deployment
+
+Any push to the main branch fires the GitHub Actions workflow to execute:
+
+    Resource Group provisioning at subscription scope.
+
+    Complete infrastructure orchestration via Bicep.
+
+    Automated ADX Table creation, JSON mapping ingestion, and streaming ingestion policies.
+
+    Seamless telegraf.conf payload synchronization to an Azure File share mount.
+
+    Zero-downtime hot restart of the Container App runtime engine.
+
+
+---
+
+### `AGENTS.MD`
+
+```markdown
+# Telegraf Agent Worker Configuration
+
+This directory contains configuration parameters and environment blueprints for the serverless **Telegraf Worker Engine** executing inside Azure Container Apps (ACA).
+
+## Runtime Architecture Profile
+* **Compute Tier:** Azure Container Apps Serverless Engine
+* **Allocation Engine:** 0.5 vCPU Core / 1.0Gi Memory
+* **Configuration Vector:** Mounted as a **ReadOnly Azure File Share** mapped to path `/etc/telegraf/telegraf.conf`
+* **Lifecycle State:** Controlled revision sync with automatic platform updates.
+
+## Environment Secret Resolution
+The `telegraf.conf` leverages runtime environment variables. Inject these variables into the container environment or manage them via Azure Key Vault:
+
+| Variable | Description | Target Path |
+| :--- | :--- | :--- |
+| `APPD_HOST` | AppDynamics Controller endpoint | `inputs.http.urls` |
+| `APPD_APP` | AppD Application Identifier | `inputs.http.urls` |
+| `APPD_USER` | API Access Username | `inputs.http.username` |
+| `APPD_PASSWORD` | API Access Secret Key Token | `inputs.http.password` |
+| `EVENTHUB_NAMESPACE` | Service Bus FQDN target namespace | `outputs.kafka.brokers` |
+| `EVENTHUB_NAME` | Dedicated Event Hub ingestion topic | `outputs.kafka.topic` |
+| `EVENTHUB_CONNECTION_STRING` | Event Hub Authorization Sasl Connection Token | `outputs.kafka.sasl_password` |
+
+## Pipeline Parsing Rules
+* **Interval Collection:** Default metrics extraction frequency is set to `60s`.
+* **Output Format:** Flattened payloads structured via `json_v2` parsing models are optimized directly for target `AppDMetrics` database schemas inside ADX.
+
+README.MD AND AGENTS.MD LACK DETAIL... E.G. README DOESNT CONTAIN RUN STEPS EG MANUAL RUN OF CI YAML USING WORKFLOW DISPATCH E.G.
+.github/workflows/deploy.yml
+YAML
+
+name: E2E Azure Telemetry Deployment Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Enables manual triggering from the GitHub Actions UI
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RESOURCE_GROUP: "AppD-Analytics-RG"
+  LOCATION: "eastus"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Azure OIDC Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Subscription Infrastructure (Bicep)
+        id: bicep_deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scope: subscription
+          region: ${{ env.LOCATION }}
+          template: ./main.bicep
+          parameters: rgName=${{ env.RESOURCE_GROUP }} location=${{ env.LOCATION }}
+
+      - name: Sync Telegraf Configuration to Azure Files
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            STORAGE_NAME=$(echo '${{ steps.bicep_deploy.outputs.storageAccountName.value }}' | tr -d '"')
+            STORAGE_KEY=$(az storage account keys list --resource-group ${{ env.RESOURCE_GROUP }} --account-name "$STORAGE_NAME" --query "[0].value" -o tsv)
+            
+            az storage file upload \
+              --account-name "$STORAGE_NAME" \
+              --account-key "$STORAGE_KEY" \
+              --share-name "telegraf-config-share" \
+              --source "./telegraf.conf" \
+              --path "telegraf.conf"
+
+      - name: Restart Container App Worker Pod
+        uses: azure/CLI@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az containerapp revision restart \
+              --name "appd-telegraf-worker" \
+              --resource-group ${{ env.RESOURCE_GROUP }}
+
+README.md
+Markdown
+
+# AppDynamics to Azure Data Explorer (ADX) Telemetry Pipeline
+
+Automated serverless metrics ingestion pipeline leveraging Telegraf hosted on Azure Container Apps (ACA), streaming via Event Hubs into Azure Data Explorer (ADX).
+
+## Architecture Flow
+```text
+AppDynamics REST API ➔ Telegraf (Azure Container Apps) ➔ Azure Event Hubs (Kafka Interface) ➔ Azure Data Explorer (ADX)
+
+Repository Structure
+Plaintext
+
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml    # GitHub Actions CI/CD (Push & Manual Dispatch)
+├── main.bicep            # Subscription-Scope Deployment Manifest
+├── infra.bicep           # Resource Group-Scope Infrastructure Resources
+├── telegraf.conf         # Telegraf Agent Metric Collection Profile
+├── README.md             # Pipeline Operational Guide
+└── AGENTS.md             # Telegraf Environment & Secrets Reference
+
+Setup & Deployment Guide
+Step 1: Configure Azure Authentication Prerequisites
+
+    Create a Service Principal with subscription-level Contributor permissions.
+
+    Configure a federated credential linking the Service Principal to your GitHub repository (OIDC).
+
+    Populate your GitHub Repository Secrets (Settings > Secrets and variables > Actions) with the following tokens:
+
+        AZURE_CLIENT_ID
+
+        AZURE_TENANT_ID
+
+        AZURE_SUBSCRIPTION_ID
+
+Step 2: Triggering the Execution Pipeline
+Option A: Automated Trigger
+
+Commit and push changes directly to the main branch:
+Bash
+
+git add .
+git commit -m "feat: deploy e2e telemetry stack"
+git push origin main
+
+Option B: Manual Trigger (Workflow Dispatch)
+
+    Navigate to your GitHub Repository website.
+
+    Click on the Actions tab.
+
+    Select E2E Azure Telemetry Deployment Pipeline from the left sidebar.
+
+    Click the Run workflow dropdown panel on the right.
+
+    Select branch main and click the green Run workflow button.
+
+Step 3: Verification & Validation
+
+Verify table structure and confirm live ingestion flows inside your ADX Web UI query console:
+Code snippet
+
+// Confirm table schema, mapping policy, and ingestion state
+AppDMetrics
+| count
+
+// Inspect latest streamed telemetry payloads
+AppDMetrics
+| order by Timestamp desc
+| take 10
+
+
+---
+
+### `AGENTS.md`
+
+```markdown
+# Telegraf Agent Worker Configuration
+
+This document specifies variables, parsing mechanics, and runtime properties for the stateless `appd-telegraf-worker` instance running inside Azure Container Apps.
+
+## Compute Allocation & Mounting Profile
+* **Compute Footprint:** 0.5 CPU / 1.0Gi Memory
+* **Storage Mount:** Azure File Share configured for `ReadOnly` access mounted to `/etc/telegraf`
+* **Target Binary Entrypoint:** Automatically monitors changes to `/etc/telegraf/telegraf.conf`
+
+## Core Configuration Schema
+
+### 1. Ingestion Engine (`inputs.http`)
+Connects to the AppDynamics Controller REST endpoint using structured query arrays.
+* **Frequency:** Standard interval tracking defaults to `60s`.
+* **Timeout Execution:** Network cutoff limit enforced at `15s`.
+* **Data Format:** Leverages `json_v2` syntax paths to traverse and extract nested metric matrices from arrays.
+
+### 2. Egress Ingestion Bus (`outputs.kafka`)
+Streams processed data using the Azure Event Hubs Kafka compatibility layer.
+* **Port Layer:** Handles TLS traffic via standard port `9093`.
+* **SASL Engine:** Authenticates natively using `$ConnectionString` tokens under `PLAIN` text mechanisms.
+
+## Required Environment Runtime Pass-throughs
+
+The container requires the following variables injected into the Azure Container App execution template runtime context to resolve the tokens embedded inside `telegraf.conf`:
+
+| Target Key | Purpose | Expected Mapping |
+| :--- | :--- | :--- |
+| `APPD_HOST` | FQDN of AppD Controller | `yourtenant.saas.appdynamics.com` |
+| `APPD_APP` | Application Scope String | Target Application Name |
+| `APPD_USER` | Controller API User Account | `api-user@yourtenant` |
+| `APPD_PASSWORD` | API Secret Key Identifier | Secure Plaintext String Token |
+| `EVENTHUB_NAMESPACE` | Event Hubs Service Bus Domain | `appdmetrics-ehns` |
+| `EVENTHUB_NAME` | Ingestion Topic Identifier | `metrics-topic` |
+| `EVENTHUB_CONNECTION_STRING` | Primary Connection String Token | `Endpoint=sb://...;SharedAccessKey=...` |
+
+> **Security Note:** In production settings, populate these environment fields inside the Container App container template using explicit Key Vault reference secrets (`@Microsoft.KeyVault(...)`) instead of plaintext values.
+
+RE-ASKING THE QUESTION, WHAT ARE THE PRE-REQUISITES? AZURE/NON-AZURE
+
+Azure: Subscription, OIDC Service Principal (Contributor).
+
+Non-Azure: GitHub repository with secrets, AppDynamics instance with REST API access.
