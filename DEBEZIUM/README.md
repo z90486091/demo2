@@ -12,6 +12,7 @@ Oracle changes through Kafka into Postgres.
 | Oracle | gvenzl/oracle-free:23-slim (ships Oracle 26ai) |
 | Postgres | postgres:15 |
 | Kafka Connect | quay.io/debezium/connect:3.4 |
+| AKHQ (dashboard) | tchiotludo/akhq |
 | Debezium Oracle connector | 3.4.2.Final |
 | Debezium JDBC sink connector | 3.4.2.Final |
 
@@ -19,7 +20,7 @@ Oracle changes through Kafka into Postgres.
 
 - Docker + Docker Compose
 - `curl`
-- Ports free: 1521, 2181, 5432, 8083, 9092
+- Ports free: 1521, 2181, 5432, 8080, 8083, 9092
 
 ## 1. Project Files
 
@@ -36,17 +37,20 @@ debezium-poc/
 ### docker-compose.yml
 
 ```yaml
+version: '3.8'
 services:
   zookeeper:
     image: quay.io/debezium/zookeeper:2.6
     ports:
       - 2181:2181
+
   kafka:
     image: quay.io/debezium/kafka:2.6
     ports:
       - 9092:9092
     environment:
       - ZOOKEEPER_CONNECT=zookeeper:2181
+
   oracle:
     image: gvenzl/oracle-free:23-slim
     ports:
@@ -56,6 +60,7 @@ services:
     volumes:
       - oracle-data:/opt/oracle/oradata
       - ./init-scripts:/container-entrypoint-initdb.d
+
   postgres:
     image: postgres:15
     ports:
@@ -64,6 +69,7 @@ services:
       - POSTGRES_DB=target_db
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
+
   connect:
     build:
       context: .
@@ -80,6 +86,24 @@ services:
     depends_on:
       - kafka
       - oracle
+
+  akhq:
+    image: tchiotludo/akhq
+    ports:
+      - 8080:8080
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            docker-kafka:
+              properties:
+                bootstrap.servers: "kafka:9092"
+              connect:
+                - name: "connect"
+                  url: "http://connect:8083"
+    depends_on:
+      - kafka
+      - connect
 
 volumes:
   oracle-data:
@@ -288,6 +312,25 @@ docker exec -it debezium-poc-postgres-1 psql -U postgres -d target_db \
 
 Expected result: rows 1–6 present, with 2 and 3 showing updated names,
 7–11 absent.
+
+## 7. Monitoring (AKHQ)
+
+```bash
+docker compose up -d akhq
+```
+
+Open `http://localhost:8080` — shows topics, messages, and Connect
+status.
+
+REST API equivalents (what AKHQ visualizes):
+
+```bash
+curl http://localhost:8083/connectors
+curl http://localhost:8083/connectors/oracle-source-connector/status
+curl http://localhost:8083/connectors/postgres-sink-connector/status
+curl http://localhost:8083/connectors/oracle-source-connector/tasks
+curl http://localhost:8083/connector-plugins
+```
 
 ## Known Gotchas
 
