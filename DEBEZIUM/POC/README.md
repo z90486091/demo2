@@ -236,3 +236,79 @@ data is intentionally never streamed.
 - New Oracle column added later → `schema.evolution: none` means sink
   fails on that field → re-run ora2pg DDL export/apply for that table
   BEFORE resuming DBZ DML for it.
+
+## Part 5 - Oracle scheduled jobs
+
+```sql
+-- STEP 1: Oracle — extract job metadata
+SELECT job_name, job_action, repeat_interval, enabled, start_date
+FROM user_scheduler_jobs
+WHERE job_name = 'JOB_ARCHIVE_ORDERS';
+```
+
+```sql
+-- STEP 2: Postgres — rewrite job_action as PL/pgSQL function
+CREATE OR REPLACE FUNCTION archive_orders_fn() RETURNS void AS $$
+BEGIN
+  INSERT INTO archived_orders (id, customer_id, amount, archived_date)
+  SELECT id, customer_id, amount, order_date
+  FROM orders
+  WHERE status = 'CANCELLED';
+  DELETE FROM orders WHERE status = 'CANCELLED';
+END;
+$$ LANGUAGE plpgsql;
+```
+
+```
+-- STEP 3: translate repeat_interval -> cron
+Oracle: FREQ=DAILY;BYHOUR=2
+Cron:   0 2 * * *
+```
+
+```
+# STEP 4: enable pg_cron on Postgres container
+```
+```diff
+--- a/Dockerfile.postgres
++++ b/Dockerfile.postgres
+@@ -1,4 +1,10 @@
+ FROM postgres:15
++RUN apt-get update && apt-get install -y postgresql-15-cron && rm -rf /var/lib/apt/lists/*
++RUN echo "shared_preload_libraries = 'pg_cron'" >> /usr/share/postgresql/postgresql.conf.sample
+```
+
+```bash
+docker compose build --no-cache postgres
+docker compose up -d postgres
+```
+
+```sql
+-- STEP 5: create extension + register job
+CREATE EXTENSION pg_cron;
+
+SELECT cron.schedule(
+  'job_archive_orders',
+  '0 2 * * *',
+  'SELECT archive_orders_fn();'
+);
+```
+
+```sql
+-- STEP 6: verify registration
+SELECT jobid, jobname, schedule, command FROM cron.job;
+```
+
+```sql
+-- STEP 7: verify execution history (after first run)
+SELECT jobid, status, return_message, start_time, end_time
+FROM cron.job_run_details
+ORDER BY start_time DESC;
+```
+
+```sql
+-- STEP 8: Oracle — disable original job after cutover confirmed
+BEGIN
+  DBMS_SCHEDULER.DISABLE('JOB_ARCHIVE_ORDERS');
+END;
+/
+```
