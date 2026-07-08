@@ -1,0 +1,465 @@
+-- ============================================================
+-- ORACLE 26ai SOURCE — full DDL+DML setup
+-- Multitenant: 1 CDB (CDB$ROOT) + 1 PDB (FREEPDB1)
+-- Run as: docker exec -it debezium-poc-oracle-1 sqlplus / as sysdba
+-- ============================================================
+-- SOURCE ONLY. No sink/Postgres objects in this file.
+-- ============================================================
+
+
+-- ============================================================
+-- PART A — CDB$ROOT: common user + grants (run once, CDB level)
+-- ============================================================
+ALTER SESSION SET CONTAINER = CDB$ROOT;
+
+CREATE USER c##dbzuser IDENTIFIED BY oracle CONTAINER=ALL;
+
+GRANT CONNECT, RESOURCE TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ANY DICTIONARY TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ON V_$INSTANCE TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ON V_$DATABASE TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ON V_$PDBS TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ON V_$LOG TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ON V_$LOGFILE TO c##dbzuser CONTAINER=ALL;
+GRANT SELECT ON V_$ARCHIVED_LOG TO c##dbzuser CONTAINER=ALL;
+GRANT SYSDBA TO c##dbzuser CONTAINER=ALL;
+GRANT EXECUTE_CATALOG_ROLE TO c##dbzuser CONTAINER=ALL;
+GRANT EXECUTE ON DBMS_LOGMNR TO c##dbzuser CONTAINER=ALL;
+GRANT LOGMINING TO c##dbzuser CONTAINER=ALL;
+GRANT CREATE ANY DIRECTORY TO c##dbzuser CONTAINER=ALL;
+
+ALTER USER c##dbzuser QUOTA UNLIMITED ON USERS;
+
+-- ARCHIVELOG mode (required for LogMiner) — one-time, CDB level
+-- Uncomment if not already enabled:
+-- SHUTDOWN IMMEDIATE;
+-- STARTUP MOUNT;
+-- ALTER DATABASE ARCHIVELOG;
+-- ALTER DATABASE OPEN;
+-- ARCHIVE LOG LIST;
+
+
+-- ============================================================
+-- PART B — FREEPDB1: all schema objects (run at PDB level)
+-- ============================================================
+ALTER SESSION SET CONTAINER = FREEPDB1;
+
+-- reconnect as c##dbzuser from here on:
+-- CONNECT c##dbzuser/oracle@//localhost:1521/FREEPDB1
+
+
+-- --------------------------------------------------------------
+-- B1. SEQUENCE
+-- --------------------------------------------------------------
+CREATE SEQUENCE test_cdc_seq
+  START WITH 100
+  INCREMENT BY 1
+  NOCACHE;
+
+
+-- --------------------------------------------------------------
+-- B2. TABLES
+-- --------------------------------------------------------------
+
+-- Parent table
+CREATE TABLE customers (
+  id            NUMBER PRIMARY KEY,
+  name          VARCHAR2(100) NOT NULL,
+  email         VARCHAR2(150),
+  created_at    DATE DEFAULT SYSDATE
+);
+ALTER TABLE customers ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Child table with FK
+CREATE TABLE orders (
+  id            NUMBER PRIMARY KEY,
+  customer_id   NUMBER REFERENCES customers(id),
+  amount        NUMBER(10,2) NOT NULL,
+  status        VARCHAR2(20) DEFAULT 'PENDING',
+  order_date    DATE DEFAULT SYSDATE
+);
+ALTER TABLE orders ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- LOB table
+CREATE TABLE documents (
+  id            NUMBER PRIMARY KEY,
+  title         VARCHAR2(200),
+  body          CLOB,
+  attachment    BLOB
+);
+ALTER TABLE documents ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Check constraint
+CREATE TABLE inventory (
+  id            NUMBER PRIMARY KEY,
+  sku           VARCHAR2(50) NOT NULL,
+  qty           NUMBER CHECK (qty >= 0)
+);
+ALTER TABLE inventory ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Partitioned table
+CREATE TABLE events_log (
+  id            NUMBER,
+  event_type    VARCHAR2(30),
+  event_date    DATE
+)
+PARTITION BY RANGE (event_date) (
+  PARTITION p_2026_q1 VALUES LESS THAN (DATE '2026-04-01'),
+  PARTITION p_2026_q2 VALUES LESS THAN (DATE '2026-07-01'),
+  PARTITION p_2026_q3 VALUES LESS THAN (DATE '2026-10-01')
+);
+ALTER TABLE events_log ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Composite PK
+CREATE TABLE order_items (
+  order_id      NUMBER,
+  line_no       NUMBER,
+  product       VARCHAR2(100),
+  qty           NUMBER,
+  CONSTRAINT pk_order_items PRIMARY KEY (order_id, line_no)
+);
+ALTER TABLE order_items ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Identity column
+CREATE TABLE audit_log (
+  id            NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  action        VARCHAR2(50),
+  logged_at     TIMESTAMP DEFAULT SYSTIMESTAMP
+);
+ALTER TABLE audit_log ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Virtual/computed column
+CREATE TABLE order_totals (
+  id            NUMBER PRIMARY KEY,
+  price         NUMBER(10,2),
+  qty           NUMBER,
+  total         NUMBER(10,2) GENERATED ALWAYS AS (price * qty) VIRTUAL
+);
+ALTER TABLE order_totals ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- JSON column (native Oracle 21c+)
+CREATE TABLE customer_prefs (
+  id            NUMBER PRIMARY KEY,
+  customer_id   NUMBER REFERENCES customers(id),
+  prefs         JSON
+);
+ALTER TABLE customer_prefs ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- XMLType column
+CREATE TABLE legacy_configs (
+  id            NUMBER PRIMARY KEY,
+  config_xml    XMLTYPE
+);
+ALTER TABLE legacy_configs ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Timestamp with time zone / interval
+CREATE TABLE scheduled_jobs (
+  id            NUMBER PRIMARY KEY,
+  run_at        TIMESTAMP WITH TIME ZONE,
+  duration      INTERVAL DAY TO SECOND
+);
+ALTER TABLE scheduled_jobs ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Self-referencing FK (hierarchical)
+CREATE TABLE org_chart (
+  id            NUMBER PRIMARY KEY,
+  employee_name VARCHAR2(100),
+  manager_id    NUMBER REFERENCES org_chart(id)
+);
+ALTER TABLE org_chart ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Compressed table
+CREATE TABLE archived_orders (
+  id            NUMBER PRIMARY KEY,
+  customer_id   NUMBER,
+  amount        NUMBER(10,2),
+  archived_date DATE
+) COMPRESS;
+ALTER TABLE archived_orders ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+-- Multi-column unique constraint
+CREATE TABLE user_roles (
+  user_id       NUMBER,
+  role_id       NUMBER,
+  assigned_at   DATE DEFAULT SYSDATE,
+  CONSTRAINT uq_user_role UNIQUE (user_id, role_id)
+);
+ALTER TABLE user_roles ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+
+-- --------------------------------------------------------------
+-- B3. GLOBAL TEMPORARY TABLE (GTT)
+-- --------------------------------------------------------------
+CREATE GLOBAL TEMPORARY TABLE staging_orders (
+  id            NUMBER,
+  customer_id   NUMBER,
+  amount        NUMBER(10,2)
+) ON COMMIT DELETE ROWS;
+
+
+-- --------------------------------------------------------------
+-- B4. INDEXES
+-- --------------------------------------------------------------
+CREATE INDEX idx_orders_customer ON orders(customer_id);
+CREATE UNIQUE INDEX idx_customers_email ON customers(email);
+CREATE INDEX idx_inventory_sku ON inventory(sku);
+CREATE BITMAP INDEX idx_orders_status_bmp ON orders(status);
+CREATE INDEX idx_customers_upper_name ON customers(UPPER(name));
+
+
+-- --------------------------------------------------------------
+-- B5. VIEW
+-- --------------------------------------------------------------
+CREATE VIEW vw_customer_orders AS
+  SELECT c.id AS customer_id, c.name, o.id AS order_id, o.amount, o.status
+  FROM customers c
+  JOIN orders o ON o.customer_id = c.id;
+
+
+-- --------------------------------------------------------------
+-- B6. MATERIALIZED VIEW
+-- --------------------------------------------------------------
+CREATE MATERIALIZED VIEW mv_customer_totals
+  BUILD IMMEDIATE
+  REFRESH COMPLETE ON DEMAND
+AS
+  SELECT customer_id, SUM(amount) AS total_spent, COUNT(*) AS order_count
+  FROM orders
+  GROUP BY customer_id;
+
+
+-- --------------------------------------------------------------
+-- B7. SYNONYM
+-- --------------------------------------------------------------
+CREATE SYNONYM syn_customers FOR customers;
+
+
+-- --------------------------------------------------------------
+-- B8. TRIGGERS
+-- --------------------------------------------------------------
+CREATE OR REPLACE TRIGGER trg_customers_bi
+BEFORE INSERT ON customers
+FOR EACH ROW
+WHEN (NEW.id IS NULL)
+BEGIN
+  :NEW.id := test_cdc_seq.NEXTVAL;
+END;
+/
+
+CREATE OR REPLACE TRIGGER trg_orders_audit
+BEFORE UPDATE ON orders
+FOR EACH ROW
+BEGIN
+  :NEW.order_date := SYSDATE;
+END;
+/
+
+
+-- --------------------------------------------------------------
+-- B9. FUNCTION
+-- --------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_order_total(p_customer_id NUMBER)
+RETURN NUMBER
+IS
+  v_total NUMBER;
+BEGIN
+  SELECT NVL(SUM(amount), 0) INTO v_total
+  FROM orders
+  WHERE customer_id = p_customer_id;
+  RETURN v_total;
+END;
+/
+
+
+-- --------------------------------------------------------------
+-- B10. STORED PROCEDURE
+-- --------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE sp_bulk_insert_orders(p_count NUMBER)
+IS
+BEGIN
+  FOR i IN 1..p_count LOOP
+    INSERT INTO orders (id, customer_id, amount, status)
+    VALUES (
+      (SELECT NVL(MAX(id), 0) + 1 FROM orders),
+      1,
+      ROUND(DBMS_RANDOM.VALUE(10, 500), 2),
+      'PENDING'
+    );
+    COMMIT;
+  END LOOP;
+END;
+/
+
+
+-- --------------------------------------------------------------
+-- B11. PACKAGE
+-- --------------------------------------------------------------
+CREATE OR REPLACE PACKAGE pkg_order_mgmt AS
+  PROCEDURE cancel_order(p_order_id NUMBER);
+  FUNCTION get_status(p_order_id NUMBER) RETURN VARCHAR2;
+END pkg_order_mgmt;
+/
+
+CREATE OR REPLACE PACKAGE BODY pkg_order_mgmt AS
+  PROCEDURE cancel_order(p_order_id NUMBER) IS
+  BEGIN
+    UPDATE orders SET status = 'CANCELLED' WHERE id = p_order_id;
+    COMMIT;
+  END cancel_order;
+
+  FUNCTION get_status(p_order_id NUMBER) RETURN VARCHAR2 IS
+    v_status VARCHAR2(20);
+  BEGIN
+    SELECT status INTO v_status FROM orders WHERE id = p_order_id;
+    RETURN v_status;
+  END get_status;
+END pkg_order_mgmt;
+/
+
+
+-- --------------------------------------------------------------
+-- B12. OBJECT TYPE + dependent table
+-- --------------------------------------------------------------
+CREATE OR REPLACE TYPE address_type AS OBJECT (
+  street  VARCHAR2(100),
+  city    VARCHAR2(50),
+  zip     VARCHAR2(10)
+);
+/
+
+CREATE TABLE customer_addresses (
+  id            NUMBER PRIMARY KEY,
+  customer_id   NUMBER REFERENCES customers(id),
+  address       address_type
+);
+ALTER TABLE customer_addresses ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+
+-- --------------------------------------------------------------
+-- B13. NESTED TABLE / VARRAY + dependent table
+-- --------------------------------------------------------------
+CREATE OR REPLACE TYPE phone_list_type AS VARRAY(5) OF VARCHAR2(20);
+/
+
+CREATE TABLE customer_phones (
+  id            NUMBER PRIMARY KEY,
+  customer_id   NUMBER REFERENCES customers(id),
+  phones        phone_list_type
+);
+ALTER TABLE customer_phones ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
+
+
+-- --------------------------------------------------------------
+-- B14. DB LINK (illustrative — requires reachable remote instance)
+-- --------------------------------------------------------------
+-- CREATE DATABASE LINK remote_link
+--   CONNECT TO remote_user IDENTIFIED BY remote_pass
+--   USING 'REMOTE_TNS_ALIAS';
+
+
+-- --------------------------------------------------------------
+-- B15. FLASHBACK / VERSIONING (query reference only, no DDL)
+-- --------------------------------------------------------------
+-- SELECT * FROM orders AS OF TIMESTAMP (SYSTIMESTAMP - INTERVAL '1' HOUR);
+
+
+-- ============================================================
+-- PART C — DML (all objects, FREEPDB1)
+-- ============================================================
+
+INSERT INTO customers (name, email) VALUES ('Alice', 'alice@test.com');
+INSERT INTO customers (name, email) VALUES ('Bob', 'bob@test.com');
+INSERT INTO customers (name, email) VALUES ('Carol', 'carol@test.com');
+COMMIT;
+
+INSERT INTO orders (id, customer_id, amount, status) VALUES (1, 1, 100.50, 'PENDING');
+INSERT INTO orders (id, customer_id, amount, status) VALUES (2, 1, 250.00, 'PENDING');
+INSERT INTO orders (id, customer_id, amount, status) VALUES (3, 2, 75.25, 'PENDING');
+COMMIT;
+
+INSERT INTO inventory (id, sku, qty) VALUES (1, 'SKU-001', 100);
+INSERT INTO inventory (id, sku, qty) VALUES (2, 'SKU-002', 50);
+COMMIT;
+
+INSERT INTO documents (id, title, body) VALUES (1, 'Test Doc', TO_CLOB('Hello CDC world'));
+COMMIT;
+
+INSERT INTO events_log (id, event_type, event_date) VALUES (1, 'LOGIN', DATE '2026-02-15');
+INSERT INTO events_log (id, event_type, event_date) VALUES (2, 'LOGIN', DATE '2026-05-15');
+INSERT INTO events_log (id, event_type, event_date) VALUES (3, 'LOGOUT', DATE '2026-08-15');
+COMMIT;
+
+INSERT INTO order_items VALUES (1, 1, 'Widget', 3);
+INSERT INTO order_items VALUES (1, 2, 'Gadget', 1);
+COMMIT;
+
+INSERT INTO audit_log (action) VALUES ('LOGIN');
+INSERT INTO audit_log (action) VALUES ('LOGOUT');
+COMMIT;
+
+INSERT INTO order_totals (id, price, qty) VALUES (1, 9.99, 4);
+COMMIT;
+
+INSERT INTO customer_prefs (id, customer_id, prefs)
+  VALUES (1, 1, '{"theme":"dark","notifications":true}');
+COMMIT;
+
+INSERT INTO legacy_configs (id, config_xml)
+  VALUES (1, XMLTYPE('<config><timeout>30</timeout></config>'));
+COMMIT;
+
+INSERT INTO scheduled_jobs (id, run_at, duration)
+  VALUES (1, SYSTIMESTAMP, INTERVAL '2' HOUR);
+COMMIT;
+
+INSERT INTO org_chart (id, employee_name, manager_id) VALUES (1, 'CEO', NULL);
+INSERT INTO org_chart (id, employee_name, manager_id) VALUES (2, 'VP Eng', 1);
+INSERT INTO org_chart (id, employee_name, manager_id) VALUES (3, 'Engineer', 2);
+COMMIT;
+
+INSERT INTO archived_orders VALUES (1, 1, 100.00, DATE '2025-01-01');
+COMMIT;
+
+INSERT INTO user_roles (user_id, role_id) VALUES (1, 10);
+INSERT INTO user_roles (user_id, role_id) VALUES (1, 20);
+COMMIT;
+
+INSERT INTO customer_addresses (id, customer_id, address)
+  VALUES (1, 1, address_type('123 Main St', 'Springfield', '90210'));
+COMMIT;
+
+INSERT INTO customer_phones (id, customer_id, phones)
+  VALUES (1, 1, phone_list_type('555-0100', '555-0101'));
+COMMIT;
+
+-- exercise stored proc / package (DML via PL/SQL)
+EXEC sp_bulk_insert_orders(5);
+EXEC pkg_order_mgmt.cancel_order(3);
+
+-- update / delete pass
+UPDATE customers SET email = 'alice.new@test.com' WHERE name = 'Alice';
+UPDATE inventory SET qty = qty - 10 WHERE sku = 'SKU-001';
+UPDATE order_totals SET qty = 5 WHERE id = 1;
+UPDATE org_chart SET employee_name = 'Senior Engineer' WHERE id = 3;
+DELETE FROM orders WHERE status = 'CANCELLED';
+DELETE FROM user_roles WHERE role_id = 20;
+COMMIT;
+
+-- materialized view refresh (bulk op, not row DML — DBZ won't see this as INSERT/UPDATE)
+EXEC DBMS_MVIEW.REFRESH('MV_CUSTOMER_TOTALS', 'C');
+
+
+-- ============================================================
+-- REFERENCE: table.include.list for oracle-source.json
+-- (update after running this file)
+-- ============================================================
+-- C##DBZUSER.CUSTOMERS,C##DBZUSER.ORDERS,C##DBZUSER.INVENTORY,
+-- C##DBZUSER.DOCUMENTS,C##DBZUSER.EVENTS_LOG,C##DBZUSER.ORDER_ITEMS,
+-- C##DBZUSER.AUDIT_LOG,C##DBZUSER.ORDER_TOTALS,C##DBZUSER.CUSTOMER_PREFS,
+-- C##DBZUSER.LEGACY_CONFIGS,C##DBZUSER.SCHEDULED_JOBS,C##DBZUSER.ORG_CHART,
+-- C##DBZUSER.ARCHIVED_ORDERS,C##DBZUSER.USER_ROLES,
+-- C##DBZUSER.CUSTOMER_ADDRESSES,C##DBZUSER.CUSTOMER_PHONES
+--
+-- NOT in table.include.list (not DBZ-relevant, DDL-only or session-scoped):
+-- staging_orders (GTT), vw_customer_orders (view),
+-- mv_customer_totals (materialized view), syn_customers (synonym)
