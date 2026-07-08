@@ -363,6 +363,25 @@ ALTER TABLE customer_phones ADD SUPPLEMENTAL LOG DATA (ALL) COLUMNS;
 -- SELECT * FROM orders AS OF TIMESTAMP (SYSTIMESTAMP - INTERVAL '1' HOUR);
 
 
+-- --------------------------------------------------------------
+-- B16. SCHEDULED JOB (DBMS_SCHEDULER)
+-- ora2pg: NOT migrated automatically — no Postgres equivalent.
+-- DBZ: N/A. Requires manual recreation via pg_cron on sink,
+-- translating repeat_interval to cron syntax by hand.
+-- --------------------------------------------------------------
+BEGIN
+  DBMS_SCHEDULER.CREATE_JOB (
+    job_name        => 'JOB_ARCHIVE_ORDERS',
+    job_type        => 'PLSQL_BLOCK',
+    job_action      => 'BEGIN INSERT INTO archived_orders SELECT id, customer_id, amount, order_date FROM orders WHERE status = ''CANCELLED''; COMMIT; END;',
+    start_date      => SYSTIMESTAMP,
+    repeat_interval => 'FREQ=DAILY;BYHOUR=2',
+    enabled         => TRUE
+  );
+END;
+/
+
+
 -- ============================================================
 -- PART C — DML (all objects, FREEPDB1)
 -- ============================================================
