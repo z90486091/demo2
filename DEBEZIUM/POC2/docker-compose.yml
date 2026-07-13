@@ -1,0 +1,93 @@
+version: '3.8'
+services:
+  zookeeper:
+    image: quay.io/debezium/zookeeper:2.6
+    ports:
+      - 2181:2181
+
+  kafka:
+    image: quay.io/debezium/kafka:2.6
+    ports:
+      - 9092:9092
+    environment:
+      - ZOOKEEPER_CONNECT=zookeeper:2181
+
+  oracle:
+    image: gvenzl/oracle-free:23-slim
+    ports:
+      - 1521:1521
+    environment:
+      - ORACLE_PASSWORD=oracle
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./init-scripts:/container-entrypoint-initdb.d
+
+  postgres:
+    image: postgres:15
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=target_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+
+  connect:
+    build:
+      context: .
+      dockerfile: Dockerfile.connect
+    ports:
+      - 8083:8083
+    environment:
+      - CLASSPATH=/kafka/connect/debezium-connector-oracle/ojdbc11-23.6.0.24.10.jar:/kafka/connect/debezium-connector-oracle/orai18n-23.6.0.24.10.jar
+      - BOOTSTRAP_SERVERS=kafka:9092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=my_connect_configs
+      - OFFSET_STORAGE_TOPIC=my_connect_offsets
+      - STATUS_STORAGE_TOPIC=my_connect_statuses
+    depends_on:
+      - kafka
+      - oracle
+
+  akhq:
+    image: tchiotludo/akhq
+    ports:
+      - 8080:8080
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            docker-kafka:
+              properties:
+                bootstrap.servers: "kafka:9092"
+              connect:
+                - name: "connect"
+                  url: "http://connect:8083"
+    depends_on:
+      - kafka
+      - connect
+    
+  ora2pg:
+    image: georgmoser/ora2pg
+    volumes:
+      - ./ora2pg:/data
+    environment:
+      - ORACLE_HOME=/usr/lib/oracle/21/client64
+    depends_on:
+      - oracle
+      - postgres
+    entrypoint: ["tail", "-f", "/dev/null"]
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "5678:5678"
+    depends_on:
+      - kafka
+    environment:
+      - N8N_SECURE_COOKIE=false
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  oracle-data:
+  n8n_data:
