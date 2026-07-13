@@ -1,0 +1,22 @@
+{
+  "name": "oracle-source-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.oracle.OracleConnector",
+    "tasks.max": "1",
+    "database.hostname": "oracle",
+    "database.port": "1521",
+    "database.user": "c##dbzuser",
+    "database.password": "oracle",
+    "database.dbname": "FREE",
+    "database.pdb.name": "FREEPDB1",
+    "topic.prefix": "oracle_cdc",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
+    "schema.history.internal.kafka.topic": "schemahistory.oracle",
+    "database.connection.adapter": "LogMiner",
+    "table.exclude.list": "C##DBZUSER\\.USER_ROLES,C##DBZUSER\\.EVENTS_LOG,C##DBZUSER\\.CUSTOMER_ADDRESSES,C##DBZUSER\\.CUSTOMER_PHONES,C##DBZUSER\\.MV_CUSTOMER_TOTALS",
+    "schema.include.list": "C##DBZUSER",
+    "schemas.enable": "true",
+    "converters": "nativeJson",
+    "nativeJson.type": "com.custom.migration.OracleNativeJsonConverter"
+  }
+}
