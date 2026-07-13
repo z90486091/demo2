@@ -1,0 +1,19 @@
+FROM quay.io/debezium/connect:3.4
+ENV KAFKA_CONNECT_PLUGINS_DIR=/kafka/connect
+USER root
+RUN curl -sO https://repo1.maven.org/maven2/io/debezium/debezium-connector-oracle/3.4.2.Final/debezium-connector-oracle-3.4.2.Final-plugin.tar.gz && \
+    tar -xzf debezium-connector-oracle-3.4.2.Final-plugin.tar.gz -C $KAFKA_CONNECT_PLUGINS_DIR && \
+    rm debezium-connector-oracle-3.4.2.Final-plugin.tar.gz
+RUN curl -sO https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.6.0.24.10/ojdbc11-23.6.0.24.10.jar && \
+    curl -sO https://repo1.maven.org/maven2/com/oracle/database/nls/orai18n/23.6.0.24.10/orai18n-23.6.0.24.10.jar && \
+    mv ojdbc11-23.6.0.24.10.jar $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/ && \
+    mv orai18n-23.6.0.24.10.jar $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/
+RUN rm -f $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/ojdbc8-21.11.0.0.jar
+RUN curl -sO https://repo1.maven.org/maven2/io/debezium/debezium-connector-jdbc/3.4.2.Final/debezium-connector-jdbc-3.4.2.Final-plugin.tar.gz && \
+    tar -xzf debezium-connector-jdbc-3.4.2.Final-plugin.tar.gz -C $KAFKA_CONNECT_PLUGINS_DIR && \
+    rm debezium-connector-jdbc-3.4.2.Final-plugin.tar.gz
+RUN curl -sO https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar && \
+    mv postgresql-42.7.4.jar $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-jdbc/
+RUN chown -R kafka:kafka $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-jdbc && \
+    chmod -R 755 $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-jdbc
+USER kafka
