@@ -139,8 +139,13 @@ docker exec -i debezium-poc-oracle-1 sqlplus / as sysdba
 ```
 ```sql
 ALTER SESSION SET CONTAINER = CDB$ROOT;
-SELECT supplemental_log_data_min FROM v$database;   -- expect YES
-ARCHIVE LOG LIST;                                    -- expect "Database log mode: Archive Mode"
+
+-- expect YES
+SELECT supplemental_log_data_min FROM v$database;
+
+-- expect "Database log mode: Archive Mode"
+ARCHIVE LOG LIST;
+exit;
 ```
 
 ### 4. Manually create schema + seed data
@@ -153,15 +158,24 @@ Confirm — **do this before moving on, zero rows here means the script
 did not actually run and nothing downstream will work**:
 
 ```sql
+docker exec -i debezium-poc-oracle-1 sqlplus / as sysdba
 ALTER SESSION SET CONTAINER = FREEPDB1;
 SELECT object_type, COUNT(*) FROM all_objects WHERE owner = 'C##DBZUSER' GROUP BY object_type;
 SELECT table_name FROM all_tables WHERE owner = 'C##DBZUSER' ORDER BY table_name;
+exit;
 ```
 
 ### 5. Bring up the rest of the stack
 
 ```bash
 docker compose up -d
+
+# cd converters
+# mvn clean package
+
+#copy custom json converter into connect container
+# docker cp target/oracle-json-converter-1.0.jar debezium-poc-connect-1:/kafka/connect/debezium-connector-oracle/
+# docker compose restart connect
 ```
 
 ### 6. Export + apply DDL via ora2pg (ora2pg owns all Postgres DDL)
@@ -291,7 +305,8 @@ docker exec debezium-poc-postgres-1 psql -U postgres -d target_db \
   -c "SELECT * FROM customers ORDER BY id;" \
   -c "SELECT * FROM orders ORDER BY id;" \
   -c "SELECT * FROM audit_log ORDER BY id;" \
-  -c "SELECT * FROM order_totals ORDER BY id;"
+  -c "SELECT * FROM order_totals ORDER BY id;" \
+  -c "SELECT * FROM customer_prefs;"
 ```
 
 If this shows zero rows despite step 9 passing, re-check step 9 — it
@@ -328,6 +343,395 @@ docker exec -it debezium-poc-postgres-1 psql -U postgres -d target_db \
   -c "SELECT email FROM customers WHERE id = 1;"
 ```
 
+### 11. Support for JSON cols
+Tables containing columns with data type JSON are skipped by LogMiner
+unless you have xstream, GoldenGate or other similar enterprise licence
+
+```bash
+SQL> select * from customer_prefs;
+
+	ID CUSTOMER_ID
+---------- -----------
+PREFS
+--------------------------------------------------------------------------------
+	 1	     1
+{"theme":"dark","notifications":true}
+```
+
+```bash
+show logminer unknown operation here
+```
+
+```bash
+docker exec -it debezium-poc-postgres-1 psql -U postgres -d target_db
+psql (15.17 (Debian 15.17-1.pgdg13+1))
+Type "help" for help.
+
+target_db=# select * from customer_prefs;
+ id | customer_id | prefs
+----+-------------+-------
+(0 rows)
+
+target_db=#
+```
+> ora2pg.conf patch
+
+>> `DATA_TYPE JSON:TEXT`
+
+Deploy kafka jdbc source and sink connector plugin jar
+
+```
+docker compose exec -u root connect sh -c "
+  microdnf -y install tar gzip && \
+  curl -L http://client.hub.confluent.io/confluent-hub-client-latest.tar.gz -o /tmp/hub.tar.gz && \
+  mkdir -p /opt/confluent-hub && \
+  tar -xzf /tmp/hub.tar.gz -C /opt/confluent-hub && \
+  /opt/confluent-hub/bin/confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:10.8.2 --component-dir /kafka/connect/ && \
+  rm -rf /tmp/hub.tar.gz
+"
+
+docker compose exec -u root connect sh -c "
+/opt/confluent-hub/bin/confluent-hub install \
+--no-prompt confluentinc/kafka-connect-jdbc:10.8.2 \
+--component-dir /kafka/connect/ \
+--worker-configs /dev/null
+"
+```
+`docker compose restart connect`
+
+Filtered list of relevant plugins
+
+```
+curl -s http://localhost:8083/connector-plugins | grep -i jdbc
+[
+  {
+    "class":"io.confluent.connect.jdbc.JdbcSinkConnector",
+    "type":"sink",
+    "version":"10.9.3"
+  },
+  {
+    "class":"io.debezium.connector.jdbc.JdbcSinkConnector",
+    "type":"sink",
+    "version":"3.4.2.Final"
+  },
+  {
+    "class":"io.confluent.connect.jdbc.JdbcSourceConnector",
+    "type":"source",
+    "version":
+    "10.9.3"
+  },
+  {
+    "class":"io.debezium.connector.oracle.OracleConnector",
+    "type":"source",
+    "version":"3.4.2.Final"
+  },
+  {
+    "class":"io.debezium.connector.postgresql.PostgresConnector",
+    "type":"source",
+    "version":"3.4.3.Final"
+  }
+]
+```
+
+#### 11.1 Create new source and sink for EACH db table in source which has a JSON datatype column
+
+```json
+{
+  "name": "jdbc-prefs-source",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "connection.url": "jdbc:oracle:thin:@oracle:1521/FREEPDB1",
+    "connection.user": "c##dbzuser",
+    "connection.password": "oracle",
+    "query": "SELECT ID, CUSTOMER_ID, JSON_SERIALIZE(PREFS RETURNING VARCHAR2(4000)) as PREFS FROM C##DBZUSER.CUSTOMER_PREFS",
+    "mode": "bulk",
+    "topic.prefix": "jdbcoracle__customer_prefs"    
+  }
+}
+```
+
+```json
+{
+  "name": "jdbc-prefs-sink",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "topics": "jdbcoracle__customer_prefs",
+    "connection.url": "jdbc:postgresql://host.docker.internal:5432/target_db?stringtype=unspecified",
+    "connection.user": "postgres",
+    "connection.password": "postgres",
+    "auto.create": "true",
+    "insert.mode": "upsert",
+    "pk.mode": "record_value",
+    "pk.fields": "ID",
+    "table.name.format": "customer_prefs",
+    "quote.sql.identifiers": "never"
+  }
+}
+```
+#### 11.2 Deploy new source and sink
+```sh
+curl -X POST -H "Content-Type: application/json" -d @jdbc-prefs-source.json http://localhost:8083/connectors
+curl -X POST -H "Content-Type: application/json" -d @jdbc-prefs-sink.json http://localhost:8083/connectors
+```
+#### 11.3 Check status of new source and sink
+```sh
+curl -s http://localhost:8083/connectors/jdbc-prefs-source/status | jq
+curl -s http://localhost:8083/connectors/jdbc-prefs-sink/status | jq
+```
+#### 11.4 Delete new source and sink
+```sh
+curl -X DELETE http://localhost:8083/connectors/jdbc-prefs-source
+curl -X DELETE http://localhost:8083/connectors/jdbc-prefs-sink
+```
+> Note: To redeploy, do 11.4 and 11.1, then check 11.3
+
+
+#### 11.5 Review data landed in sink
+> Original data
+```
+target_db=# select * from customer_prefs;
+ id | customer_id |                 prefs
+----+-------------+---------------------------------------
+  1 |           1 | {"theme":"dark","notifications":true}
+(1 row)
+
+target_db=#
+```
+> Insert new data
+```sql
+SQL> insert into customer_prefs values(2,2, '{}');
+
+1 row created.
+
+SQL> commit;
+
+Commit complete.
+
+SQL> select * from customer_prefs;
+
+	ID CUSTOMER_ID
+---------- -----------
+PREFS
+--------------------------------------------------------------------------------
+	 1	     1
+{"theme":"dark","notifications":true}
+
+	 2	     2
+{}
+
+
+SQL> select id from customers;
+
+	ID
+----------
+	 1
+	 2
+	 3
+```
+
+```sql
+target_db=# select * from customer_prefs;
+ id | customer_id |                 prefs
+----+-------------+---------------------------------------
+  1 |           1 | {"theme":"dark","notifications":true}
+  2 |           2 | {}
+(2 rows)
+```
+
+> Update data
+```sql
+SQL> update customer_prefs set customer_id=2 where id=2;
+
+1 row updated.
+
+SQL> commit;
+
+Commit complete.
+
+SQL> select * from customer_prefs;
+
+	ID CUSTOMER_ID
+---------- -----------
+PREFS
+--------------------------------------------------------------------------------
+	 1	     1
+{"theme":"dark","notifications":true}
+
+	 2	     2
+{}
+
+SQL> desc customer_prefs;
+ Name					   Null?    Type
+ ----------------------------------------- -------- ----------------------------
+ ID					   NOT NULL NUMBER
+ CUSTOMER_ID					    NUMBER
+ PREFS						    JSON
+```
+
+```sql
+target_db=# select * from customer_prefs;
+ id | customer_id |                 prefs
+----+-------------+---------------------------------------
+  1 |           1 | {"theme":"dark","notifications":true}
+  2 |           2 | {}
+(2 rows)
+
+target_db=# \d customer_prefs
+             Table "public.customer_prefs"
+   Column    |  Type  | Collation | Nullable | Default
+-------------+--------+-----------+----------+---------
+ id          | bigint |           | not null |
+ customer_id | bigint |           |          |
+ prefs       | json   |           |          |
+Indexes:
+    "customer_prefs_pkey" PRIMARY KEY, btree (id)
+Foreign-key constraints:
+    "sys_c008665" FOREIGN KEY (customer_id) REFERENCES customers(id)
+```
+
+
+> Delete data
+
+Needs a new source and sink for shadow table based tracking
+Create an Oracle shadow table + trigger, sync it to Postgres via JDBC, and use a Postgres trigger to execute the delete.
+
+- Kafka Source Connector:
+Deploy a new source connector to ingest the delete logs:
+
+```json
+{
+  "name": "jdbc-deletes-source",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "connection.url": "jdbc:oracle:thin:@oracle:1521/FREEPDB1",
+    "connection.user": "c##dbzuser",
+    "connection.password": "oracle",
+    "schema.pattern": "C##DBZUSER",
+    "table.types": "TABLE",
+    "table.whitelist": "C##DBZUSER.CUSTOMER_PREFS_DEL",
+    "mode": "timestamp",
+    "timestamp.column.name": "DEL_TIME",
+    "validate.non.null": "false",
+    "topic.prefix": "oracle_deletes_",
+    "poll.interval.ms": "5000"
+  }
+}
+```
+
+- DDL for source
+```sql
+SQL> CREATE TABLE customer_prefs_del (
+  ID NUMBER,
+  DEL_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE OR REPLACE TRIGGER trg_prefs_del
+AFTER DELETE ON customer_prefs
+FOR EACH ROW
+BEGIN
+  INSERT INTO customer_prefs_del(ID) VALUES (:old.ID);
+END;
+/
+```
+
+- Kafka Sink Connector:
+Deploy a new sink connector to ingest the delete logs:
+
+```json
+{
+  "name": "jdbc-deletes-sink",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "tasks.max": "1",
+    "topics": "oracle_deletes_CUSTOMER_PREFS_DEL",
+    "connection.url": "jdbc:postgresql://postgres:5432/target_db",
+    "connection.user": "postgres",
+    "connection.password": "postgres",
+    "insert.mode": "insert",
+    "table.name.format": "oracle_deletes_customer_prefs_del",
+    "auto.create": "false",
+    "transforms": "lowercaseFields",
+    "transforms.lowercaseFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+    "transforms.lowercaseFields.renames": "ID:id,DEL_TIME:del_time"
+  }
+}
+```
+> 1 SMT for lowercase transforms
+
+- DDL for sink
+
+```sql
+CREATE TABLE oracle_deletes_customer_prefs_del (
+  id bigint, 
+  del_time timestamp
+);
+
+CREATE OR REPLACE FUNCTION execute_sink_delete() 
+RETURNS TRIGGER AS $$
+BEGIN
+  DELETE FROM customer_prefs WHERE id = NEW.id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pg_delete 
+AFTER INSERT ON oracle_deletes_customer_prefs_del
+FOR EACH ROW EXECUTE FUNCTION execute_sink_delete();
+```
+
+Deploy source and sink connectors:
+```sh
+curl -X POST -H "Content-Type: application/json" -d @jdbc-del-source.json http://localhost:8083/connectors
+curl -X POST -H "Content-Type: application/json" -d @jdbc-del-sink.json http://localhost:8083/connectors
+```
+
+Check status:
+```sh
+curl -s localhost:8083/connectors/jdbc-deletes-source/status | jq
+curl -s localhost:8083/connectors/jdbc-deletes-sink/status | jq
+```
+
+Delete source and sink connectors:
+```sh
+curl -X DELETE http://localhost:8083/connectors/jdbc-deletes-source
+curl -X DELETE http://localhost:8083/connectors/jdbc-deletes-sink
+```
+
+Verification:
+```sql
+SQL> delete from customer_prefs where id=2;
+
+1 row deleted.
+
+SQL> commit;
+
+Commit complete.
+
+SQL> select * from customer_prefs_del;
+
+	ID
+----------
+DEL_TIME
+---------------------------------------------------------------------------
+	 2
+15-JUL-26 05.53.02.260089 AM
+```
+
+```sh
+target_db=# select * from customer_prefs;
+ id | customer_id |                 prefs
+----+-------------+---------------------------------------
+  1 |           1 | {"theme":"dark","notifications":true}
+(1 row)
+
+target_db=# select * from oracle_deletes_customer_prefs_del;
+ id |        del_time
+----+------------------------
+  2 | 2026-07-15 05:53:02.26
+(1 row)
+```
+
+To redeploy, delete the connector(s) using curl DELETE as shown above and create them again using curl POST as shown above
 ## Known Issues (Resolved / Tracked)
 
 | Table | Issue | Resolution |

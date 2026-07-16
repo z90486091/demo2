@@ -38,7 +38,7 @@ services:
     ports:
       - 8083:8083
     environment:
-      - CLASSPATH=/kafka/connect/debezium-connector-oracle/ojdbc11-23.6.0.24.10.jar:/kafka/connect/debezium-connector-oracle/orai18n-23.6.0.24.10.jar
+      - CLASSPATH=/kafka/connect/debezium-connector-oracle/oracle-json-converter-1.0.jar:/kafka/connect/debezium-connector-oracle/ojdbc11-23.6.0.24.10.jar:/kafka/connect/debezium-connector-oracle/orai18n-23.6.0.24.10.jar
       - BOOTSTRAP_SERVERS=kafka:9092
       - GROUP_ID=1
       - CONFIG_STORAGE_TOPIC=my_connect_configs
@@ -47,6 +47,15 @@ services:
     depends_on:
       - kafka
       - oracle
+
+  # debezium-ui:
+  #   image: quay.io/debezium/debezium-ui:latest
+  #   ports:
+  #     - 8086:8080
+  #   environment:
+  #     - KAFKA_CONNECT_URIS=http://connect:8083
+  #   depends_on:
+  #     - connect
 
   akhq:
     image: tchiotludo/akhq
@@ -77,16 +86,16 @@ services:
       - postgres
     entrypoint: ["tail", "-f", "/dev/null"]
 
-  n8n:
-    image: n8nio/n8n:latest
-    ports:
-      - "5678:5678"
-    depends_on:
-      - kafka
-    environment:
-      - N8N_SECURE_COOKIE=false
-    volumes:
-      - n8n_data:/home/node/.n8n
+  # n8n:
+  #   image: n8nio/n8n:latest
+  #   ports:
+  #     - "5678:5678"
+  #   depends_on:
+  #     - kafka
+  #   environment:
+  #     - N8N_SECURE_COOKIE=false
+  #   volumes:
+  #     - n8n_data:/home/node/.n8n
 
 volumes:
   oracle-data:

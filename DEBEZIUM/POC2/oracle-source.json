@@ -13,10 +13,9 @@
     "schema.history.internal.kafka.bootstrap.servers": "kafka:9092",
     "schema.history.internal.kafka.topic": "schemahistory.oracle",
     "database.connection.adapter": "LogMiner",
-    "table.exclude.list": "C##DBZUSER\\.USER_ROLES,C##DBZUSER\\.EVENTS_LOG,C##DBZUSER\\.CUSTOMER_ADDRESSES,C##DBZUSER\\.CUSTOMER_PHONES,C##DBZUSER\\.MV_CUSTOMER_TOTALS",
+    "table.exclude.list": "C##DBZUSER.CUSTOMER_PREFS,C##DBZUSER.USER_ROLES,C##DBZUSER.EVENTS_LOG,C##DBZUSER.CUSTOMER_ADDRESSES,C##DBZUSER.CUSTOMER_PHONES,C##DBZUSER.MV_CUSTOMER_TOTALS",
     "schema.include.list": "C##DBZUSER",
-    "schemas.enable": "true",
-    "converters": "nativeJson",
-    "nativeJson.type": "com.custom.migration.OracleNativeJsonConverter"
+    "database.jdbc.properties.oracle.jdbc.jsonDefaultGetObjectType": "oracle.sql.CLOB",
+    "datatype.propagate.source.type": "JSON:CLOB"
   }
 }

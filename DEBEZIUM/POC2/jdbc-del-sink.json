@@ -1,0 +1,17 @@
+{
+  "name": "jdbc-deletes-sink",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "tasks.max": "1",
+    "topics": "oracle_deletes_CUSTOMER_PREFS_DEL",
+    "connection.url": "jdbc:postgresql://postgres:5432/target_db",
+    "connection.user": "postgres",
+    "connection.password": "postgres",
+    "insert.mode": "insert",
+    "table.name.format": "oracle_deletes_customer_prefs_del",
+    "auto.create": "false",
+    "transforms": "lowercaseFields",
+    "transforms.lowercaseFields.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+    "transforms.lowercaseFields.renames": "ID:id,DEL_TIME:del_time"
+  }
+}

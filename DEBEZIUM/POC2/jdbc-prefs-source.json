@@ -1,0 +1,12 @@
+{
+  "name": "jdbc-prefs-source",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "connection.url": "jdbc:oracle:thin:@oracle:1521/FREEPDB1",
+    "connection.user": "c##dbzuser",
+    "connection.password": "oracle",
+    "query": "SELECT ID, CUSTOMER_ID, JSON_SERIALIZE(PREFS RETURNING VARCHAR2(4000)) as PREFS FROM C##DBZUSER.CUSTOMER_PREFS",
+    "mode": "bulk",
+    "topic.prefix": "jdbcoracle__customer_prefs"
+  }
+}

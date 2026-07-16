@@ -1,0 +1,16 @@
+{
+  "name": "jdbc-prefs-sink",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+    "topics": "jdbcoracle__customer_prefs",
+    "connection.url": "jdbc:postgresql://host.docker.internal:5432/target_db?stringtype=unspecified",
+    "connection.user": "postgres",
+    "connection.password": "postgres",
+    "auto.create": "true",
+    "insert.mode": "upsert",
+    "pk.mode": "record_value",
+    "pk.fields": "ID",
+    "table.name.format": "customer_prefs",
+    "quote.sql.identifiers": "never"
+  }
+}

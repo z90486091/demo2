@@ -1,0 +1,17 @@
+{
+  "name": "jdbc-deletes-source",
+  "config": {
+    "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+    "connection.url": "jdbc:oracle:thin:@oracle:1521/FREEPDB1",
+    "connection.user": "c##dbzuser",
+    "connection.password": "oracle",
+    "schema.pattern": "C##DBZUSER",
+    "table.types": "TABLE",
+    "table.whitelist": "C##DBZUSER.CUSTOMER_PREFS_DEL",
+    "mode": "timestamp",
+    "timestamp.column.name": "DEL_TIME",
+    "validate.non.null": "false",
+    "topic.prefix": "oracle_deletes_",
+    "poll.interval.ms": "5000"
+  }
+}

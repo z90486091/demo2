@@ -1,3 +1,9 @@
+FROM maven:3.9-eclipse-temurin-17 AS converter-build
+WORKDIR /build
+COPY converters/pom.xml .
+COPY converters/src ./src
+RUN mvn -q package
+
 FROM quay.io/debezium/connect:3.4
 ENV KAFKA_CONNECT_PLUGINS_DIR=/kafka/connect
 USER root
@@ -8,7 +14,13 @@ RUN curl -sO https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc11/23.
     curl -sO https://repo1.maven.org/maven2/com/oracle/database/nls/orai18n/23.6.0.24.10/orai18n-23.6.0.24.10.jar && \
     mv ojdbc11-23.6.0.24.10.jar $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/ && \
     mv orai18n-23.6.0.24.10.jar $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/
-RUN rm -f $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/ojdbc8-21.11.0.0.jar
+
+# RUN find $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle -iname "ojdbc*.jar"
+RUN rm -f $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/ojdbc11-21.15.0.0.jar
+
+COPY --from=converter-build /build/target/oracle-json-converter-1.0.jar $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/
+
+# RUN rm -f $KAFKA_CONNECT_PLUGINS_DIR/debezium-connector-oracle/ojdbc8-21.11.0.0.jar
 RUN curl -sO https://repo1.maven.org/maven2/io/debezium/debezium-connector-jdbc/3.4.2.Final/debezium-connector-jdbc-3.4.2.Final-plugin.tar.gz && \
     tar -xzf debezium-connector-jdbc-3.4.2.Final-plugin.tar.gz -C $KAFKA_CONNECT_PLUGINS_DIR && \
     rm debezium-connector-jdbc-3.4.2.Final-plugin.tar.gz
