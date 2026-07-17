@@ -374,29 +374,38 @@ target_db=# select * from customer_prefs;
 
 target_db=#
 ```
-> ora2pg.conf patch
 
->> `DATA_TYPE JSON:TEXT`
+#### Non-LogMiner approach
 
-Deploy kafka jdbc source and sink connector plugin jar
+~~> ora2pg.conf patch~~
+
+~~>> `DATA_TYPE JSON:TEXT`~~
+
+IMPORTANT: Deploy kafka jdbc source and sink connector plugin jar ver 10.9.3
 
 ```
 docker compose exec -u root connect sh -c "
   microdnf -y install tar gzip && \
-  curl -L http://client.hub.confluent.io/confluent-hub-client-latest.tar.gz -o /tmp/hub.tar.gz && \
+  curl -L http://client.hub.confluent.io/confluent-hub-client-latest.tar.gz \
+  -o /tmp/hub.tar.gz && \
   mkdir -p /opt/confluent-hub && \
   tar -xzf /tmp/hub.tar.gz -C /opt/confluent-hub && \
-  /opt/confluent-hub/bin/confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:10.8.2 --component-dir /kafka/connect/ && \
+  /opt/confluent-hub/bin/confluent-hub install \
+  --no-prompt confluentinc/kafka-connect-jdbc:10.9.3 \
+  --component-dir /kafka/connect/ \
+  --worker-configs /dev/null && \
   rm -rf /tmp/hub.tar.gz
 "
+```
 
-docker compose exec -u root connect sh -c "
+~~docker compose exec -u root connect sh -c "
 /opt/confluent-hub/bin/confluent-hub install \
---no-prompt confluentinc/kafka-connect-jdbc:10.8.2 \
+--no-prompt confluentinc/kafka-connect-jdbc:10.9.3 \
 --component-dir /kafka/connect/ \
 --worker-configs /dev/null
-"
-```
+"~~
+
+
 `docker compose restart connect`
 
 Filtered list of relevant plugins
@@ -470,8 +479,10 @@ curl -s http://localhost:8083/connector-plugins | grep -i jdbc
 ```
 #### 11.2 Deploy new source and sink
 ```sh
-curl -X POST -H "Content-Type: application/json" -d @jdbc-prefs-source.json http://localhost:8083/connectors
-curl -X POST -H "Content-Type: application/json" -d @jdbc-prefs-sink.json http://localhost:8083/connectors
+curl -X POST -H "Content-Type: application/json" -d @jdbc-prefs-source.json \
+http://localhost:8083/connectors
+curl -X POST -H "Content-Type: application/json" -d @jdbc-prefs-sink.json \
+http://localhost:8083/connectors
 ```
 #### 11.3 Check status of new source and sink
 ```sh
@@ -538,7 +549,7 @@ target_db=# select * from customer_prefs;
 (2 rows)
 ```
 
-> Update data
+> Update existing data
 ```sql
 SQL> update customer_prefs set customer_id=2 where id=2;
 
@@ -563,9 +574,9 @@ PREFS
 SQL> desc customer_prefs;
  Name					   Null?    Type
  ----------------------------------------- -------- ----------------------------
- ID					   NOT NULL NUMBER
+ ID					       NOT NULL NUMBER
  CUSTOMER_ID					    NUMBER
- PREFS						    JSON
+ PREFS						        JSON
 ```
 
 ```sql
@@ -592,11 +603,12 @@ Foreign-key constraints:
 
 > Delete data
 
-Needs a new source and sink for shadow table based tracking
-Create an Oracle shadow table + trigger, sync it to Postgres via JDBC, and use a Postgres trigger to execute the delete.
+>> Needs a "new" _source_ and _sink_ for **shadow** table based tracking _(no LogMiner)_
+
+Create a new **shadow** table + trigger in oracle source for tracking deletes, sync it to Postgres via JDBC, and use a Postgres trigger to execute the delete.
 
 - Kafka Source Connector:
-Deploy a new source connector to ingest the delete logs:
+Deploy a new oracle source connector to ingest the delete logs:
 
 ```json
 {
@@ -618,9 +630,9 @@ Deploy a new source connector to ingest the delete logs:
 }
 ```
 
-- DDL for source
+- DDL for **shadow** tracking table in Oracle source
 ```sql
-SQL> CREATE TABLE customer_prefs_del (
+CREATE TABLE customer_prefs_del (
   ID NUMBER,
   DEL_TIME TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -635,7 +647,7 @@ END;
 ```
 
 - Kafka Sink Connector:
-Deploy a new sink connector to ingest the delete logs:
+Deploy a new postgres sink connector to ingest the delete logs:
 
 ```json
 {
@@ -658,7 +670,7 @@ Deploy a new sink connector to ingest the delete logs:
 ```
 > 1 SMT for lowercase transforms
 
-- DDL for sink
+- DDL for **shadow** table tracking postgres sink
 
 ```sql
 CREATE TABLE oracle_deletes_customer_prefs_del (
@@ -678,11 +690,19 @@ CREATE TRIGGER trg_pg_delete
 AFTER INSERT ON oracle_deletes_customer_prefs_del
 FOR EACH ROW EXECUTE FUNCTION execute_sink_delete();
 ```
+> Remember to redeploy (`DELETE+POST`) or patch (`PUT`) existing postgres-sink-connector with this fix to ignore the source shadow table:
+
+`"topics.regex": "oracle_cdc\\.C__DBZUSER\\.(?!USER_ROLES$|EVENTS_LOG$|CUSTOMER_PREFS_DEL$).*",`
+
+>> p.s. The table in postgres sink is `oracle_deletes_customer_prefs_del`
 
 Deploy source and sink connectors:
 ```sh
-curl -X POST -H "Content-Type: application/json" -d @jdbc-del-source.json http://localhost:8083/connectors
-curl -X POST -H "Content-Type: application/json" -d @jdbc-del-sink.json http://localhost:8083/connectors
+curl -X POST -H "Content-Type: application/json" -d @jdbc-del-source.json \
+http://localhost:8083/connectors
+
+curl -X POST -H "Content-Type: application/json" -d @jdbc-del-sink.json \
+http://localhost:8083/connectors
 ```
 
 Check status:
