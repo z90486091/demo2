@@ -166,6 +166,7 @@ ApiManagementGatewayLogs
 ## Addendum
 ### RCA.PRD
 
+---
 # PRD: WSOD Root Cause Investigation (Codebase Analysis)
 
 ## Objective
@@ -231,3 +232,241 @@ A single written report covering all 9 investigation tasks above, structured wit
 - Explicit callout if a task's premise turned out to be false (e.g., a referenced file doesn't exist) rather than silently omitting it
 
 End the report with a ranked list of the findings most likely relevant to the WSOD symptom, and a separate list of anything found that, while not necessarily the root cause, represents a clear gap or risk (e.g., missing instrumentation, undocumented custom code) worth flagging to the dev team regardless of outcome.
+
+
+---
+# LOG ANALYSIS CODE
+```python
+"""
+AFD Cache Status Analysis
+==========================
+Input: one or more CSV exports from AFD/APIM KQL queries (Log Analytics -> Export -> CSV).
+Expected columns (missing ones are handled gracefully, analysis for that
+column is skipped with a warning):
+    TimeGenerated, requestUri_s, cacheStatus_s, httpStatusCode_s,
+    responseBytes_s, clientIP_s, trackingReference_s, host_s,
+    details_data_s / details_msg_s (WAF), CorrelationId (APIM)
+
+Usage:
+    python afd_cache_analysis.py access_log.csv [waf_log.csv] [apim_log.csv]
+
+Outputs (written to ./afd_analysis_output/):
+    - cache_status_summary.csv
+    - cache_status_by_uri.csv
+    - config_nocache_deep_dive.csv
+    - byte_size_by_cache_status.csv
+    - hourly_cache_status_heatmap.csv
+    - outage_window_flagged.csv (if OUTAGE_WINDOWS below is filled in)
+    - summary_report.txt
+"""
+
+import sys
+import os
+import pandas as pd
+import numpy as np
+from pathlib import Path
+
+# -----------------------------------------------------------------------
+# FILL THIS IN: known outage windows (UTC), as (start, end) tuples.
+# Leave empty list if you don't have specific windows yet.
+# -----------------------------------------------------------------------
+OUTAGE_WINDOWS = [
+    # ("2026-08-01 11:00:00", "2026-08-01 11:30:00"),
+    # ("2026-08-05 09:15:00", "2026-08-05 09:45:00"),
+]
+
+OUTPUT_DIR = Path("./afd_analysis_output")
+
+
+def load_csvs(paths):
+    """Load and concatenate one or more CSV exports into a single DataFrame."""
+    frames = []
+    for p in paths:
+        df = pd.read_csv(p)
+        df["__source_file"] = os.path.basename(p)
+        frames.append(df)
+        print(f"Loaded {p}: {len(df)} rows, columns: {list(df.columns)}")
+    combined = pd.concat(frames, ignore_index=True, sort=False)
+    return combined
+
+
+def normalize_time(df):
+    """Find and parse the timestamp column into a proper datetime."""
+    for col in ["TimeGenerated", "timestamp", "TimeGenerated_t"]:
+        if col in df.columns:
+            df["_time"] = pd.to_datetime(df[col], utc=True, errors="coerce")
+            return df
+    print("WARNING: no recognizable time column found. Time-based analyses will be skipped.")
+    df["_time"] = pd.NaT
+    return df
+
+
+def find_col(df, candidates):
+    """Return the first matching column name from a list of candidates, or None."""
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def cache_status_summary(df, cache_col):
+    """Overall distribution of cache statuses."""
+    summary = df[cache_col].value_counts(dropna=False).reset_index()
+    summary.columns = ["cacheStatus", "count"]
+    summary["pct"] = (summary["count"] / summary["count"].sum() * 100).round(2)
+    return summary
+
+
+def cache_status_by_uri(df, cache_col, uri_col):
+    """Cross-tab of cache status per URI — spot which specific paths show CONFIG_NOCACHE."""
+    ct = pd.crosstab(df[uri_col], df[cache_col])
+    ct["total"] = ct.sum(axis=1)
+    ct = ct.sort_values("total", ascending=False)
+    return ct
+
+
+def config_nocache_deep_dive(df, cache_col):
+    """
+    Isolate CONFIG_NOCACHE rows and compare against TCP_HIT/TCP_MISS rows
+    on the SAME uri, looking for any column that differs systematically
+    (query params, status code, byte size, client IP pattern, etc).
+    """
+    nocache_mask = df[cache_col].astype(str).str.contains("NOCACHE", case=False, na=False)
+    nocache_rows = df[nocache_mask].copy()
+    cached_rows = df[~nocache_mask].copy()
+
+    print(f"\nCONFIG_NOCACHE rows: {len(nocache_rows)} / {len(df)} total ({len(nocache_rows)/max(len(df),1)*100:.2f}%)")
+
+    # Compare byte sizes
+    bytes_col = find_col(df, ["responseBytes_s", "responseBytes", "sc-bytes"])
+    if bytes_col:
+        print("\n--- Byte size comparison: CONFIG_NOCACHE vs cached ---")
+        print("CONFIG_NOCACHE:", nocache_rows[bytes_col].describe())
+        print("Cached (HIT/MISS):", cached_rows[bytes_col].describe())
+
+    # Compare status codes
+    status_col = find_col(df, ["httpStatusCode_s", "httpStatusCode", "sc-status"])
+    if status_col:
+        print("\n--- Status code distribution: CONFIG_NOCACHE ---")
+        print(nocache_rows[status_col].value_counts())
+
+    # Check if query string presence correlates
+    uri_col = find_col(df, ["requestUri_s", "requestUri", "cs-uri"])
+    if uri_col:
+        nocache_rows["_has_query"] = nocache_rows[uri_col].astype(str).str.contains(r"\?")
+        cached_rows["_has_query"] = cached_rows[uri_col].astype(str).str.contains(r"\?")
+        print("\n--- Query string presence ---")
+        print("CONFIG_NOCACHE with query string:", nocache_rows["_has_query"].mean() * 100, "%")
+        print("Cached rows with query string:", cached_rows["_has_query"].mean() * 100, "%")
+
+        # Specifically flag ngsw-cache-bust
+        nocache_rows["_has_cachebust"] = nocache_rows[uri_col].astype(str).str.contains("ngsw-cache-bust")
+        print("CONFIG_NOCACHE with ngsw-cache-bust param:", nocache_rows["_has_cachebust"].sum())
+
+    # Time clustering — is CONFIG_NOCACHE bursty or spread evenly?
+    if df["_time"].notna().any():
+        nocache_rows["_hour"] = nocache_rows["_time"].dt.floor("H")
+        hourly_counts = nocache_rows["_hour"].value_counts().sort_index()
+        print("\n--- CONFIG_NOCACHE occurrences by hour (top 10 busiest) ---")
+        print(hourly_counts.sort_values(ascending=False).head(10))
+
+    return nocache_rows
+
+
+def byte_size_by_cache_status(df, cache_col):
+    bytes_col = find_col(df, ["responseBytes_s", "responseBytes", "sc-bytes"])
+    if not bytes_col:
+        print("No byte-size column found; skipping byte_size_by_cache_status.")
+        return None
+    df[bytes_col] = pd.to_numeric(df[bytes_col], errors="coerce")
+    grouped = df.groupby(cache_col)[bytes_col].agg(["count", "mean", "min", "max",
+                                                       lambda s: (s == 0).sum()])
+    grouped.columns = ["count", "mean_bytes", "min_bytes", "max_bytes", "zero_byte_count"]
+    return grouped.reset_index()
+
+
+def hourly_heatmap(df, cache_col):
+    """Hour-of-day x cache-status pivot, to spot time-of-day patterns."""
+    if df["_time"].isna().all():
+        return None
+    df["_hour_of_day"] = df["_time"].dt.hour
+    pivot = pd.crosstab(df["_hour_of_day"], df[cache_col])
+    return pivot
+
+
+def flag_outage_windows(df):
+    """Mark rows that fall inside any known outage window."""
+    if not OUTAGE_WINDOWS or df["_time"].isna().all():
+        print("No outage windows configured (or no time data) — skipping outage flagging.")
+        return None
+    df["_in_outage_window"] = False
+    for start, end in OUTAGE_WINDOWS:
+        start_ts = pd.Timestamp(start, tz="UTC")
+        end_ts = pd.Timestamp(end, tz="UTC")
+        df.loc[(df["_time"] >= start_ts) & (df["_time"] <= end_ts), "_in_outage_window"] = True
+    flagged = df[df["_in_outage_window"]]
+    print(f"\nRows falling inside known outage windows: {len(flagged)}")
+    return flagged
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python afd_cache_analysis.py <csv1> [csv2] [csv3] ...")
+        sys.exit(1)
+
+    OUTPUT_DIR.mkdir(exist_ok=True)
+
+    df = load_csvs(sys.argv[1:])
+    df = normalize_time(df)
+
+    cache_col = find_col(df, ["cacheStatus_s", "cacheStatus", "sc-cache-status"])
+    uri_col = find_col(df, ["requestUri_s", "requestUri", "cs-uri"])
+
+    report_lines = []
+    report_lines.append(f"Total rows loaded: {len(df)}")
+    report_lines.append(f"Source files: {df['__source_file'].unique().tolist()}")
+
+    if cache_col:
+        summary = cache_status_summary(df, cache_col)
+        summary.to_csv(OUTPUT_DIR / "cache_status_summary.csv", index=False)
+        report_lines.append("\n--- Cache Status Summary ---")
+        report_lines.append(summary.to_string(index=False))
+
+        if uri_col:
+            by_uri = cache_status_by_uri(df, cache_col, uri_col)
+            by_uri.to_csv(OUTPUT_DIR / "cache_status_by_uri.csv")
+            report_lines.append("\n--- Top 15 URIs by request volume, with cache status breakdown ---")
+            report_lines.append(by_uri.head(15).to_string())
+
+        nocache_rows = config_nocache_deep_dive(df, cache_col)
+        nocache_rows.to_csv(OUTPUT_DIR / "config_nocache_deep_dive.csv", index=False)
+
+        byte_summary = byte_size_by_cache_status(df, cache_col)
+        if byte_summary is not None:
+            byte_summary.to_csv(OUTPUT_DIR / "byte_size_by_cache_status.csv", index=False)
+            report_lines.append("\n--- Byte Size by Cache Status ---")
+            report_lines.append(byte_summary.to_string(index=False))
+
+        heatmap = hourly_heatmap(df, cache_col)
+        if heatmap is not None:
+            heatmap.to_csv(OUTPUT_DIR / "hourly_cache_status_heatmap.csv")
+            report_lines.append("\n--- Hourly Heatmap (hour of day x cache status) saved to CSV ---")
+    else:
+        print("WARNING: no cacheStatus column found in input — cache-specific analyses skipped.")
+
+    outage_flagged = flag_outage_windows(df)
+    if outage_flagged is not None:
+        outage_flagged.to_csv(OUTPUT_DIR / "outage_window_flagged.csv", index=False)
+        if cache_col:
+            report_lines.append("\n--- Cache status breakdown WITHIN outage windows only ---")
+            report_lines.append(outage_flagged[cache_col].value_counts().to_string())
+
+    with open(OUTPUT_DIR / "summary_report.txt", "w") as f:
+        f.write("\n".join(str(line) for line in report_lines))
+
+    print(f"\nDone. Results written to {OUTPUT_DIR.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
+```
