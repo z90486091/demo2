@@ -203,3 +203,34 @@ rg -n "navigationUrls" -A 20 ngsw-config.json
 - Combination of `no-store` (control files) + reliable `checkForUpdate` triggering + `unrecoverable` + chunk/router error handling should collectively resolve the stale-4.0.0-client problem (Y, as a combined effect — no single piece alone is sufficient)
 - AFD cannot natively block caching zero-byte 200 responses via any rule (N — not supported)
 - `no-cache`→`no-store` change does not affect existing ngsw cache-busting behavior, which is independent SW-internal logic (N — no effect)
+
+
+### ADDENDUM
+
+```mermaid
+sequenceDiagram
+    participant U as End User Device
+    participant SW as Service Worker (stale v1.1.1)
+    participant O as Origin (SWA, only serves v1.2.3)
+    participant SF as ng-safetyworker.js
+
+    U->>SW: Open app (SW never updated)
+    SW->>O: GET /locale/1.1.1/xx.json
+    O-->>SW: 404 (v1.1.1 no longer exists)
+    SW->>SF: Critical resource fetch failed
+    SF->>U: Redirect to error.html
+    Note over U,SF: Result: blank/broken page (WSOD)
+```
+
+```mermaid
+sequenceDiagram
+    participant U as End User Device
+    participant SW as Service Worker (updated to v1.2.3)
+    participant O as Origin (SWA)
+
+    U->>SW: Open app, SW check runs reliably (fix)
+    SW->>O: GET /locale/1.2.3/xx.json
+    O-->>SW: 200 OK
+    SW->>U: App renders correctly
+    Note over U,O: Result: no WSOD
+```
