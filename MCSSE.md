@@ -258,3 +258,19 @@ if __name__ == "__main__":
 ```
 python3 mcsse_rca.py export.csv
 ```
+
+# SITE24X7 NAV STEPS
+```
+﻿﻿﻿1 Open your monitor list
+   Left sidebar → Synthetic (or Web Transaction/Browser Monitors). Click the specific monitor that runs your 3-step login+workflow check.
+2 Open the monitor's detail page
+   Clicking the monitor name opens its dashboard — you'll see uptime %, response time graphs, and tabs across the top or side (Overview, Outages, Locations, etc.).
+3 Click the Outages tab
+   This lists every Down/Trouble event for this monitor, with timestamps. Find the entry matching when your blank-screen alert fired.
+4 Open that outage entry
+   Click into the specific outage row. This opens (or auto-generates, ~150s after the outage) the RCA report for that failure.
+5 Jump to the session recording
+   Inside the RCA report, look for the video/session recording panel. Skip to the timestamp matching your step 1→2 transition rather than watching from the start.
+6 Check the console errors panel alongside it
+   The same RCA report has a console errors section next to the video — check there too; your MCSSE error may show up as a raw browser console line even without full RUM.
+```
