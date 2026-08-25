@@ -31,7 +31,7 @@ jobs:
 
       - name: Run Stealth PWA Health Check
         env:
-          PWA_URL: 'https://pa4-qa.fadv.com'
+          PWA_URL: 'https://foo.bar'
         run: node test1.js
 
       - name: Upload Failure Artifacts (Screenshot & HAR)
