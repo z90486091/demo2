@@ -1,6 +1,6 @@
-# BLANK PAGE ANALYSIS STEPS
+# Blang page analysis steps
 
-## SOURCE CODE FOR IIFE
+## Source code for IIFE
 ```bash
 # Self-referencing named function expressions (the a(){a()} pattern) — likely minified, single-letter names
 rg -n '\(function\s+\w\s*\(\s*\)\s*\{' index.html apps/webapp1/src/**/*.ts
@@ -27,7 +27,7 @@ Priority order:
 - Run the state/callback/redirect_uri ones first — that's the direct path to the actual guard condition, since you already suspect it's redirect-retry related. 
 - The function a(){a()} patterns are for index.html specifically (where you actually saw it), since that file likely isn't minified/bundled the same way as the TS source.
 
-## HAR ANALYSIS
+## HAR Analysis
 
 > [!IMPORTANT]
 Run: python analyze_wsod_har.py incident.har
