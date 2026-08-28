@@ -291,3 +291,118 @@ Byte counts may differ legitimately because of:
 - Caching or protocol handling
 
 Therefore, unequal byte counts identify a request for investigation but do not alone prove data loss.
+
+> [!NOTE]
+For **Azure Static Web Apps**, Microsoft’s current documentation does **not clearly list a dedicated resource-specific Log Analytics table** for the categories:
+
+```text
+StaticSiteHttpLogs
+StaticSiteDiagnosticLogs
+```
+
+The official supported-log reference is:
+
+```text
+Microsoft.Web/staticSites
+```
+
+However, unlike Application Gateway, it does not currently provide a clearly documented table name for these Static Web App categories. `<citation src="1"></citation>`
+
+The proposed Static Web App log schema uses these categories and includes fields such as `resultSignature`, `durationMs`, `uri`, `correlationId`, and nested `properties.kiloBytesSent`/`kiloBytesReceived`. `<citation src="5"></citation>`
+
+## How to find the actual SWA table in your workspace
+
+Run:
+
+```kql
+search *
+| where TimeGenerated > ago(24h)
+| where _ResourceId =~ "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Web/staticSites/<app-name>"
+| summarize RecordCount = count() by $table
+| order by RecordCount desc
+```
+
+Or search for records by category:
+
+```kql
+search *
+| where TimeGenerated > ago(24h)
+| where Category in (
+    "StaticSiteHttpLogs",
+    "StaticSiteDiagnosticLogs"
+)
+| summarize RecordCount = count() by $table, Category
+| order by RecordCount desc
+```
+
+If the logs are in a resource-specific table, the result will show its name.
+
+## Check the legacy table
+
+```kql
+AzureDiagnostics
+| where TimeGenerated > ago(24h)
+| where ResourceId =~ "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Web/staticSites/<app-name>"
+| summarize RecordCount = count() by Category
+```
+
+If this returns data, your SWA logs are being sent to the shared `AzureDiagnostics` table.
+
+## Important correction for response-size investigation
+
+The proposed SWA HTTP log schema includes response/request size fields inside the `properties` object:
+
+```json
+"properties": {
+  "kiloBytesSent": 10,
+  "kiloBytesReceived": 520
+}
+```
+
+When stored in `AzureDiagnostics`, these may appear as dynamic or flattened columns depending on ingestion. Inspect one record:
+
+```kql
+AzureDiagnostics
+| where Category == "StaticSiteHttpLogs"
+| take 1
+```
+
+Then inspect the schema:
+
+```kql
+AzureDiagnostics
+| where Category == "StaticSiteHttpLogs"
+| getschema
+```
+
+If `properties` is available as a dynamic column, try:
+
+```kql
+AzureDiagnostics
+| where TimeGenerated > ago(24h)
+| where Category == "StaticSiteHttpLogs"
+| extend
+    Properties = todynamic(properties_s),
+    KiloBytesSent = todouble(Properties.kiloBytesSent),
+    KiloBytesReceived = todouble(Properties.kiloBytesReceived)
+| project
+    TimeGenerated,
+    uri_s,
+    resultSignature_s,
+    KiloBytesSent,
+    KiloBytesReceived,
+    correlationId_g
+```
+
+For the Application Gateway side, the documented resource-specific table is:
+
+```text
+AGWAccessLogs
+```
+
+So the practical approach is:
+
+- Discover the SWA table using `search *`.
+- Query `AzureDiagnostics` if the SWA diagnostic setting uses legacy mode.
+- Query `AGWAccessLogs` for Application Gateway.
+- Compare SWA `kiloBytesSent` with the Application Gateway backend/client byte fields, accounting for compression and proxy transformations.
