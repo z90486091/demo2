@@ -1,44 +1,75 @@
 name: PWA Stealth WSOD & WAF Monitor
-
 on:
   schedule:
     - cron: '*/10 * * * *' # Runs every 10 minutes
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
-  monitor:
+  generate-matrix:
     runs-on: ubuntu-latest
+    outputs:
+      pops: ${{ steps.set-pops.outputs.pops }}
+      urls: ${{ steps.set-urls.outputs.urls }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
           version: latest
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
+      - name: Build PoP matrix from CSV
+        id: set-pops
+        run: |
+          npx --yes csv2json tests/pop-locations.csv > /tmp/pops.json
+          echo "pops=$(cat /tmp/pops.json)" >> "$GITHUB_OUTPUT"
+      - name: Build URL matrix from CSV
+        id: set-urls
+        run: |
+          npx --yes csv2json tests/urls.csv > /tmp/urls.json
+          echo "urls=$(cat /tmp/urls.json)" >> "$GITHUB_OUTPUT"
 
+  monitor:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 20
+      fail-fast: false
+      matrix:
+        pop: ${{ fromJson(needs.generate-matrix.outputs.pops) }}
+        url: ${{ fromJson(needs.generate-matrix.outputs.urls) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: latest
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install
-
       - name: Install Playwright Browsers & System Dependencies
         run: npx playwright install --with-deps chromium
-
       - name: Run Stealth PWA Health Check
         env:
-          PWA_URL: 'https://foo.bar'
+          PWA_URL: ${{ matrix.url.url }}
+          POP_ID: ${{ matrix.pop.id }}
+          POP_LAT: ${{ matrix.pop.lat }}
+          POP_LONG: ${{ matrix.pop.long }}
         run: node test1.js
-
       - name: Upload Failure Artifacts (Screenshot & HAR)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: wsod-waf-failure-artifacts
+          name: wsod-waf-failure-${{ matrix.url.id }}-${{ matrix.pop.id }}
           path: |
             wsod-failure-*.png
             wsod-failure-*.har
