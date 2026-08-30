@@ -1,3 +1,28 @@
+## Ask 1
+(baseline, easiest to say yes to): 
+
+"Could you share the Striim Validation Report for the last run?" — it's a standard summary (in-sync/out-of-sync table pairs, run timestamps) they'd generate anyway during normal ops.
+
+## Ask 2 
+(drill-down, framed as "so I can update my tracker"): 
+
+for any table marked out-of-sync, request the corresponding Validation Pair Report — shows exact mismatched records and includes a downloadable reconciliation SQL script, so it's self-documenting.
+
+## Ask 3 
+(process artifact, not a "gotcha"): 
+
+ask for the Application Monitor screenshot/export for the pipeline (Striim's built-in health view) — frames it as "helps me correlate timing with upstream Oracle load," not as auditing them.
+
+## Ask 4 
+(closure evidence): 
+
+when they say an issue is "resolved," ask for the re-run Validation Report showing that same pair now IN-SYNC — a natural before/after, not a challenge to their word.
+
+## Ask 5 
+(trend, asked last): 
+
+request the Validation homepage's historical out-of-sync trend view — useful for your own status reporting, and hard to refuse since it's just a dashboard screenshot.
+
 A) DBA Team
 
 Which table(s) failed in the last Initial Load run, and what was the exact error/exception message?
