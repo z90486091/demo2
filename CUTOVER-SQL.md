@@ -123,3 +123,102 @@ pg = pd.read_csv('postgres_privs.csv')
 diff = pd.concat([ora, pg]).drop_duplicates(keep=False)
 print("Mismatches:", diff)
 ```
+
+## RECON
+1️⃣ **pg_sequence_reconciliation.sql** (report-only)
+```sql
+DO $$
+DECLARE
+    r RECORD;
+    max_val BIGINT;
+    seq_val BIGINT;
+BEGIN
+    FOR r IN
+        -- Case 1: sequences with formal OWNED BY (SERIAL/IDENTITY)
+        SELECT
+            s.relname AS seq_name,
+            t.relname AS table_name,
+            a.attname AS column_name
+        FROM pg_class s
+        JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a'
+        JOIN pg_class t ON t.oid = d.refobjid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+        WHERE s.relkind = 'S'
+
+        UNION
+
+        -- Case 2: sequences only referenced via nextval('seq') in a column default
+        -- (no OWNED BY link — typical of ora2pg without explicit ownership)
+        SELECT
+            regexp_replace(
+                regexp_replace(pg_get_expr(ad.adbin, ad.adrelid), '^nextval\(''', ''),
+                '''.*$', ''
+            ) AS seq_name,
+            t.relname AS table_name,
+            a.attname AS column_name
+        FROM pg_attrdef ad
+        JOIN pg_class t ON t.oid = ad.adrelid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ad.adnum
+        WHERE pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval(%'
+    LOOP
+        EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %I', r.column_name, r.table_name)
+            INTO max_val;
+        EXECUTE format('SELECT last_value FROM %I', r.seq_name)
+            INTO seq_val;
+
+        IF seq_val < max_val THEN
+            RAISE WARNING 'MISMATCH: seq % (table %.%) = % but MAX(pk) = %',
+                r.seq_name, r.table_name, r.column_name, seq_val, max_val;
+        END IF;
+    END LOOP;
+END $$;
+```
+
+2️⃣ **pg_sequence_fix.sql** (applies corrections, idempotent)
+```sql
+DO $$
+DECLARE
+    r RECORD;
+    max_val BIGINT;
+    seq_val BIGINT;
+BEGIN
+    FOR r IN
+        SELECT
+            s.relname AS seq_name,
+            t.relname AS table_name,
+            a.attname AS column_name
+        FROM pg_class s
+        JOIN pg_depend d ON d.objid = s.oid AND d.deptype = 'a'
+        JOIN pg_class t ON t.oid = d.refobjid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+        WHERE s.relkind = 'S'
+
+        UNION
+
+        SELECT
+            regexp_replace(
+                regexp_replace(pg_get_expr(ad.adbin, ad.adrelid), '^nextval\(''', ''),
+                '''.*$', ''
+            ) AS seq_name,
+            t.relname AS table_name,
+            a.attname AS column_name
+        FROM pg_attrdef ad
+        JOIN pg_class t ON t.oid = ad.adrelid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ad.adnum
+        WHERE pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval(%'
+    LOOP
+        EXECUTE format('SELECT COALESCE(MAX(%I), 0) FROM %I', r.column_name, r.table_name)
+            INTO max_val;
+        EXECUTE format('SELECT last_value FROM %I', r.seq_name)
+            INTO seq_val;
+
+        IF seq_val < max_val THEN
+            EXECUTE format('SELECT setval(%L, %s, true)', r.seq_name, max_val);
+            RAISE NOTICE 'FIXED: % set to % (was %)', r.seq_name, max_val, seq_val;
+        END IF;
+    END LOOP;
+END $$;
+```
+
+>[!IMPORTANT]
+>only catches sequences linked via `SERIAL`/`IDENTITY` ownership (`pg_depend`) — manually-attached `DEFAULT nextval(...)` sequences from ora2pg won't surface here.
