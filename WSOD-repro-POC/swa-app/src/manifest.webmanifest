@@ -1,0 +1,9 @@
+{
+  "name": "WSOD Triage PWA",
+  "short_name": "WSOD Triage",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1b1f24",
+  "theme_color": "#1b1f24",
+  "icons": []
+}
