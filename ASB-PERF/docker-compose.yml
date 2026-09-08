@@ -1,0 +1,49 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: perf-postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: perftest
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ASB emulator has no standalone mode - it requires a SQL Server
+  # backing store for its own metadata. This is Microsoft's official
+  # sidecar image, not something optional we can drop.
+  sql-edge:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: perf-sql-edge
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "yourStrong(!)Password"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P \"yourStrong(!)Password\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  servicebus-emulator:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    container_name: perf-servicebus-emulator
+    depends_on:
+      sql-edge:
+        condition: service_healthy
+    environment:
+      ACCEPT_EULA: "Y"
+      SQL_SERVER: sql-edge
+      MSSQL_SA_PASSWORD: "yourStrong(!)Password"
+    ports:
+      - "5672:5672"   # AMQP
+      - "5300:5300"   # admin/config endpoint
+    volumes:
+      - ./config/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json

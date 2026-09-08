@@ -1,0 +1,17 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Queues": [
+          { "Name": "order-created", "Properties": { "DefaultMessageTimeToLive": "PT1H", "LockDuration": "PT30S", "MaxDeliveryCount": 10 } },
+          { "Name": "order-updated", "Properties": { "DefaultMessageTimeToLive": "PT1H", "LockDuration": "PT30S", "MaxDeliveryCount": 10 } },
+          { "Name": "order-cancelled", "Properties": { "DefaultMessageTimeToLive": "PT1H", "LockDuration": "PT30S", "MaxDeliveryCount": 10 } }
+        ]
+      }
+    ],
+    "Logging": {
+      "Type": "File"
+    }
+  }
+}
