@@ -1,88 +1,185 @@
-# WSOD Local Repro — Deterministic Steps
+# WSOD Local Repro PoC — Fully Automated
 
-Goal: reproduce the confirmed symptom (zero-byte 200 JS chunk -> stuck spinner,
-mislabeled by SRE as "blank page") on office PC, without guessing.
+One command, no manual DevTools steps. Builds prod bundle, serves it, auto-detects
+the chunk(s) containing the auth-redirect logic, forces them to 200/zero-byte,
+and captures console/network/HAR/screenshot of `ngOnInit`'s reaction.
 
-Does NOT explain root cause of why the real chunk returns zero-byte in prod
-(client-side/network-path, unconfirmed). This reproduces the EFFECT only.
-
----
-
-## 1. Build matching prod exactly
-
-```bash
-git checkout <prod-tag-or-branch>   # must match what's actually deployed
-./scripts/build.sh                  # NOT `ng serve` — dev server doesn't
-                                     # chunk/hash the same way as prod
-```
-
-## 2. Serve as static files (matches how SWA actually serves it)
-
-```bash
-npx http-server dist/webapp1/browser -p 4200
-```
-
-Open `http://localhost:4200` in Chrome.
-
-## 3. Identify the chunk(s) containing the redirect/auth logic
-
-Do NOT try to match prod HAR filenames — hashes are build-specific and will
-differ locally. Instead, grep the built output directly:
-
-```bash
-grep -rl "AUTHY_ERROR" dist/webapp1/browser/*.js
-grep -rl "isPathRedirecting" dist/webapp1/browser/*.js
-```
-
-If multiple files match, rank by occurrence count to find the primary one:
-
-```bash
-grep -o "AUTHY_ERROR" dist/webapp1/browser/*.js | sort | uniq -c
-```
-
-Note all matching filenames — you may need to test them individually or
-together (see step 5).
-
-## 4. Force one (or more) of those chunks to 200 + zero-byte
-
-DevTools → **Sources** tab → **Overrides** sub-tab:
-1. "Select folder for overrides" → pick any local folder → allow file access
-2. Network tab → reload once to populate the request list
-3. Right-click the target chunk (filename from step 3) → **Override content**
-4. In the opened editor: Ctrl+A → Delete → Ctrl+S (saves as an empty file)
-5. Reload the page (Ctrl+R)
-6. Confirm in Network tab: that request now shows **200**, **0 B** — matches
-   the confirmed real-incident symptom exactly
-
-(Blocking the request instead — "Block request URL" — does NOT produce this;
-it returns `net::ERR_BLOCKED_BY_CLIENT`, a different failure mode. Use
-Override content, not Block.)
-
-## 5. If a single chunk doesn't reproduce it
-
-- Override ALL matching chunks from step 3 simultaneously, reload once
-- If symptom appears only with all of them empty: restore one at a time,
-  re-test, to isolate which specific chunk (or combination) is required
-- If it never reproduces even with all matching chunks emptied: the failure
-  may depend on load-order/timing (race), not just chunk content — note this
-  as a finding, don't force further guessing
-
-## 6. Confirm the actual symptom, not just the network state
-
-- Open DevTools **console** — note any errors thrown
-- If Redux/NgRx DevTools extension is installed: open it, watch the
-  `isRedirecting` (or actual state key — confirm exact name from your
-  reducer) value through page load — confirm whether it gets set `true`
-  and is never reset back to `false`
-- If NgRx DevTools isn't available: add a temporary `console.log` inside the
-  reducer's case(s) for that flag, rebuild (step 1), repeat
+Goal: observe actual `ngOnInit` behavior for the auth-redirect flow under a
+forced zero-byte-chunk failure — NOT a root-cause finding for why the real
+chunk goes zero-byte in prod (still unconfirmed).
 
 ---
 
-## What this does NOT tell you
+## Prereqs (one-time)
 
-- Why the real chunk returns zero-byte in prod (root cause still unconfirmed)
-- Whether AFD cache is actually in the causal chain (contradicted by BOS/SJC
-  catches occurring with cache disabled)
-- Whether this exact mechanism is what SRE/customers have been reporting —
-  it reproduces the confirmed symptom pattern, not a confirmed root cause
+```bash
+npm install -D playwright http-server
+npx playwright install chromium
+```
+
+---
+
+## `run-repro.sh` — the one command you actually run
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUILD_DIR="dist/webapp1/browser"
+PORT=4200
+BASE_URL="http://localhost:${PORT}"
+
+echo "[1/5] Building prod bundle..."
+./scripts/build.sh
+
+echo "[2/5] Auto-detecting auth-redirect chunk(s)..."
+CHUNKS=$(grep -rl "AUTHY_ERROR" "${BUILD_DIR}"/*.js | xargs -n1 basename | tr '\n' ' ')
+if [ -z "$CHUNKS" ]; then
+  echo "No chunk matched 'AUTHY_ERROR' — falling back to 'isPathRedirecting'..."
+  CHUNKS=$(grep -rl "isPathRedirecting" "${BUILD_DIR}"/*.js | xargs -n1 basename | tr '\n' ' ')
+fi
+if [ -z "$CHUNKS" ]; then
+  echo "ERROR: no matching chunk found. Check BUILD_DIR path and search strings."
+  exit 1
+fi
+echo "Targeting chunk(s): ${CHUNKS}"
+
+echo "[3/5] Serving build on ${BASE_URL}..."
+npx http-server "${BUILD_DIR}" -p "${PORT}" -s &
+SERVER_PID=$!
+sleep 2
+
+echo "[4/5] Running automated repro..."
+node automate-repro.js "${BASE_URL}" ${CHUNKS}
+
+echo "[5/5] Cleaning up..."
+kill "${SERVER_PID}" 2>/dev/null || true
+
+echo "Done. See repro-output/<timestamp>/ for results."
+```
+
+```bash
+chmod +x run-repro.sh
+./run-repro.sh
+```
+
+That's the entire manual involvement: one command, one terminal.
+
+---
+
+## `automate-repro.js` — called automatically by the script above
+
+```javascript
+/**
+ * Intercepts and forces the auto-detected chunk(s) to 200 + zero-byte,
+ * navigates, captures console/pageerror output, network log, HAR, screenshot.
+ */
+const { chromium } = require('playwright');
+const fs = require('fs');
+const path = require('path');
+
+async function main() {
+  const [, , baseUrl, ...chunkPatterns] = process.argv;
+
+  if (!baseUrl || chunkPatterns.length === 0) {
+    console.error('Usage: node automate-repro.js <baseUrl> <chunkPattern1> [chunkPattern2 ...]');
+    process.exit(1);
+  }
+
+  const outDir = path.join(__dirname, 'repro-output', String(Date.now()));
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const browser = await chromium.launch();
+  const context = await browser.newContext({
+    recordHar: { path: path.join(outDir, 'repro.har') },
+  });
+  const page = await context.newPage();
+
+  const consoleLog = [];
+  const networkLog = [];
+
+  page.on('console', (msg) => {
+    const entry = `[${msg.type()}] ${msg.text()}`;
+    consoleLog.push(entry);
+    console.log(entry);
+  });
+
+  page.on('pageerror', (err) => {
+    const entry = `[pageerror] ${err.message}\n${err.stack ?? ''}`;
+    consoleLog.push(entry);
+    console.log(entry);
+  });
+
+  await page.route('**/*', async (route) => {
+    const url = route.request().url();
+    const isTarget = chunkPatterns.some((pattern) => url.includes(pattern));
+    if (isTarget) {
+      console.log(`[override] forcing 200/0B for: ${url}`);
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'application/javascript' },
+        body: '',
+      });
+    } else {
+      await route.continue();
+    }
+  });
+
+  page.on('response', async (res) => {
+    try {
+      const body = await res.body().catch(() => null);
+      networkLog.push({
+        url: res.url(),
+        status: res.status(),
+        bytes: body ? body.length : null,
+      });
+    } catch {
+      // ignore bodies that can't be read (e.g. redirects)
+    }
+  });
+
+  console.log(`Navigating to ${baseUrl} with override on: ${chunkPatterns.join(', ')}`);
+  await page.goto(baseUrl, { waitUntil: 'networkidle' });
+
+  // Give any async auth-check / redirect logic time to run and (hopefully) fail.
+  await page.waitForTimeout(8000);
+
+  await page.screenshot({ path: path.join(outDir, 'screenshot.png'), fullPage: true });
+
+  fs.writeFileSync(path.join(outDir, 'console.log'), consoleLog.join('\n'));
+  fs.writeFileSync(path.join(outDir, 'network.json'), JSON.stringify(networkLog, null, 2));
+
+  const zeroByteHits = networkLog.filter((n) => n.status === 200 && n.bytes === 0);
+  console.log(`\nZero-byte 200 responses observed: ${zeroByteHits.length}`);
+  zeroByteHits.forEach((n) => console.log(`  - ${n.url}`));
+
+  await context.close();
+  await browser.close();
+
+  console.log(`\nOutput saved to: ${outDir}`);
+  console.log('  - repro.har       (compare against real incident HARs)');
+  console.log('  - console.log     (all console + pageerror output)');
+  console.log('  - network.json    (full response status/byte-size log)');
+  console.log('  - screenshot.png  (final page state — check for stuck spinner)');
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+```
+
+---
+
+## Output (per run, in `repro-output/<timestamp>/`)
+
+- `repro.har` — compare directly against your real BOS/SJC/Aug-5/6 HAR captures
+- `console.log` — all console output + thrown errors (surfaces `AUTHY_ERROR` if it fires visibly)
+- `network.json` — every response's status + byte size, flags zero-byte 200s automatically
+- `screenshot.png` — final rendered state; stuck spinner is visible here
+
+## What this does NOT tell you (still unresolved)
+
+- Why the real chunk returns zero-byte in prod — root cause remains client-side/network-path, unconfirmed
+- Whether `isRedirecting` itself gets stuck — headless Chromium has no Redux DevTools extension, so the flag's actual value isn't captured, only its visible side effects (console errors, final screenshot state). To see the flag directly, add a temporary `console.log` inside the reducer's `isRedirecting` case(s) and rebuild — `automate-repro.js`'s console capture will then pick it up automatically, no other change needed.
+- Whether this mechanism matches what's actually happening in prod — this reproduces the *confirmed symptom pattern* (zero-byte chunk → observe reaction), not a proven root cause
