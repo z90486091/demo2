@@ -1,7 +1,5 @@
 TLDR: Latency rules are auto-configured. For custom metric counts, you must manually create a Health Rule using static thresholds.
 
-DROP TLDR FOR NOW
-
 AppDynamics handles standard technical metrics automatically, but for custom metrics and dumb counts, you have to configure the rules manually.
 
 Here is how the architecture splits between manual setup, static thresholds, and anomaly detection for counts.
@@ -32,8 +30,6 @@ If your "dumb count" naturally fluctuates based on business hours (e.g., order v
     Available Baselines: AppD provides multiple built-in models out of the box, such as All Data (last 15 days linear), Daily Seasonality (compares 2 PM today to 2 PM over previous days), and Weekly Seasonality.
 
     Pro Tip for your DB Metrics: If you are configuring a health rule for a newly created or tweaked custom metric, use a Static Threshold first. AppD needs a continuous stream of historical data to calculate a reliable baseline; applying dynamic anomaly detection on day one will trigger constant false positives until the underlying baseline warms up.
-
-HOW CAN I PULL REALTIME METRICS DATA FROM APPD INTO A REMOTE TIMESERIES DB - NON-COMMERCIAL/NON-PAYWALLED/NON-FREEMIUM SELF-HOSTED OPTIONS ONLY!
 
 To extract metrics from AppDynamics into an entirely free, open-source, self-hosted time series database (like Prometheus, VictoriaMetrics OSS, or InfluxDB OSS), you must use AppD's native REST API. Because AppD does not natively push data out to third-party open-source storage, you need a lightweight bridge to pull from AppD and export to your TSDB.  
 
@@ -453,9 +449,6 @@ Scenario 2: Your AppD Controller is SaaS / Internet Accessible
 
     Why: Since the AppD endpoint is publicly or privately accessible from Azure, you can go 100% cloud-native. An Azure Function waking up every 60 seconds is the lowest-maintenance, lowest-cost hosting option.
 
-2. WDYM "AZURE DATABASE SCHEMA" IS THIS THE ADX DB?
-Yes, it refers exactly to the ADX Database Table.
-
 When I said "Azure database schema," I meant the specific table structure (AppDMetrics) that we defined inside your Azure Data Explorer (ADX) database using the KQL setup commands earlier.
 Why the Worker Cares About the Schema
 
@@ -468,8 +461,6 @@ $.metricPath	Extracts the full path identifier	MetricPath: string
 System time during poll	Generates an ISO 8601 timestamp	Timestamp: datetime
 
 Because you applied the Ingestion JSON Mapping (AppDMetricsMapping) directly inside ADX, your worker script doesn't need to do complex database data-type casting. It just flattens the JSON keys, ships the payload to the Event Hub, and ADX uses that schema map to slot the data into the correct database columns automatically.
-
-IS ADX RDMBS OR TSDB UNDER THE HOOD OR SOME OTHER VARIANT OF SQL/NOSQL?
 
 Under the hood, Azure Data Explorer (ADX) is a distributed, append-only, columnar analytics engine.
 
@@ -508,8 +499,6 @@ The engine automatically indexes all columns (numeric, text, and dynamic JSON bl
 3. Query Vectorization
 
 Because the data is column-oriented, the Kusto Query Engine utilizes SIMD (Single Instruction, Multiple Data) processor instructions to scan billions of rows simultaneously in parallel across the cluster nodes. This is why a KQL query over a multi-terabyte dataset returns answers in milliseconds.
-
-ROWS/COLS CONCEPTUAL MAPPING TO ADX
 
 Mapping traditional row-and-column concepts to Azure Data Explorer (ADX) requires shifting from a transactional grid mindset to a distributed columnar-indexing mindset.
 
@@ -645,8 +634,6 @@ The fundamental difference between these two systems lies in the mental executio
 
 This pipeline model makes debugging massive PB-scale queries trivial. If a query isn't returning what you expect, you don't have to rewrite the structure; you simply comment out the bottom pipe operator using double slashes (//) to check the exact state of the data matrix at that specific stage of the pipeline execution.
 
-OPTION B TELEGRAF... CONFIG/SETUP + DEPLOY STEPS
-
 Using Telegraf OSS as your worker pipeline is highly efficient for terabyte-to-petabyte scale ingestion. It is written in Go, compiled as a single stateless binary, has an incredibly low memory footprint, and natively utilizes multi-threading to handle massive batch dumps.
 
 To bridge AppD to Azure Event Hubs without writing proprietary code, Telegraf leverages the Kafka protocol. Azure Event Hubs features a Kafka-compatible frontend, allowing Telegraf’s enterprise-grade outputs.kafka plugin to stream data seamlessly over TLS.
@@ -753,9 +740,7 @@ Azure Control Plane Validation
 
 Navigate to your Azure Event Hub Namespace dashboard in the Azure Portal. Inspect the "Messages" chart to confirm you see inbound and outbound traffic matching your Telegraf loop frequency. Your ADX ingestion pipeline will automatically pick it up from there.
 
-NO NON-AZURE OPTIONS ! TELEGRAF WORKER NEEDS AN AZURE VM? Y/N
-
-NO. Telegraf does not need an Azure Virtual Machine.
+Telegraf does not need an Azure Virtual Machine.
 
 Because Telegraf is a lightweight, stateless single-binary engine, running it on a full VM adds unnecessary OS patching, maintenance, and idle compute costs. Since you are staying strictly within the Azure ecosystem, you can run Telegraf using Azure Serverless Container Platforms.
 The Two VM-Less Azure Hosting Options
@@ -802,8 +787,6 @@ Once deployed, verify that the worker is successfully polling AppD and streaming
 Bash
 
 az container logs --resource-group YourResourceGroup --name appd-telegraf-worker
-
-SHOW ME FOR ACA... NO ACI !
 
 Deploy Telegraf to Azure Container Apps (ACA) by linking your storage environment and applying a declarative YAML configuration manifest file.
 1. Link Azure Files to the ACA Environment
@@ -854,8 +837,6 @@ az containerapp create \
   --name appd-telegraf-worker \
   --resource-group MyRG \
   --yaml containerapp.yaml
-
-USING BICEP ONLY !
 
 Here is the complete Bicep template to provision the Telegraf worker inside your existing Azure Container Apps environment with the Azure File mount.
 main.bicep
@@ -942,8 +923,6 @@ az deployment group create \
     storageAccountName="mystorageaccount" \
     storageAccountKey="YOUR_STORAGE_KEY" \
     fileShareName="telegraf-config-share"
-
-FULL CODE FOR E2E: APPD -> TG WORKER ACA -> ADX ETC ALL CODE PREF BICEP, FOR OTHERS SHELLSCRIPT/PYTHON WILL DO
 
 Here is the complete, production-ready E2E codebase for the pipeline: AppD → Telegraf (ACA) → Event Hubs → ADX.
 1. Database Initialization Schema (KQL)
@@ -1173,11 +1152,7 @@ az containerapp revision restart \
   --name "appd-telegraf-worker" \
   --resource-group "$RG_NAME"
 
-ASSUME GITHUB REPO AND THEREFORE GH ACTIONS CI YAML... DEPLOY.SH NOT NEEDED?
-
 Correct, deploy.sh is obsolete. GitHub Actions workflows natively handle the Bicep deployment, file upload, and container restarts via the Azure CLI action.
-
-UPDATED E2E CODE FOR THIS... ALSO, MISSING CREATE ADX DB COMMAND
 
 Databases in Azure Data Explorer cannot be created using KQL script commands because KQL requires an existing database context to execute. Instead, database provisioning must be handled via the Azure Control Plane (Bicep).
 
@@ -1447,8 +1422,6 @@ jobs:
               --name "appd-telegraf-worker" \
               --resource-group ${{ env.RESOURCE_GROUP }}
 
-1. NO MANUAL STEPS !
-
 Automated KQL table, schema mapping, and policies via native Bicep deployment script execution resource.
 Updated main.bicep
 Code snippet
@@ -1598,16 +1571,9 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 output storageAccountName string = storage.name
 
-SO STEP1. CAN BE IGNORED IF ALL LOGIC IN MAIN.BICEP? Y/N
-
-YES. The adxSchemaScript resource inside main.bicep automates the table creation entirely, making manual execution of setup.kql completely unnecessary.
-
-WHAT ABT ADX DB CREATION
+The adxSchemaScript resource inside main.bicep automates the table creation entirely, making manual execution of setup.kql completely unnecessary.
 
 It is automatically handled in main.bicep by the Microsoft.Kusto/clusters/databases resource (adxDatabase), which provisions the database before the script runs.
-
-WHAT ARE THE FILES THAT NEED TO BE IN MY NEW GH REPO FOR THIS E2E CODE SOLUTION?
-Plaintext
 
 .
 ├── .github/
@@ -1616,19 +1582,11 @@ Plaintext
 ├── main.bicep
 └── telegraf.conf
 
-WHAT ARE THE AZURE PRE-REQUISITES FOR SUCCESSFUL RUN? AZ SUBSCRIPTION?
-
 Active Azure subscription, target Resource Group, and a Service Principal with Contributor role mapped to GitHub Secrets for OIDC authentication.
-
-WHY DOESNT THE MAIN.BICEP CREATE THE RG?
 
 The template targets a resource group scope. Creating an RG requires a subscription-level scope deployment (targetScope = 'subscription').
 
-WHAT SCOPE DOES CURRENT MAIN.BICEP USE?
-
 It uses the resourceGroup scope, which is the default Bicep scope when no targetScope is explicitly defined.
-
-SO THEN UPDAET THE MAIN.BICEP CODE TO USE TARGETSCOPE=SUBSCRIPTION
 
 To shift to a subscription scope, Bicep requires a two-file modular structure: main.bicep (creates the Resource Group) and infra.bicep (provisions the resources inside that group).
 1. main.bicep (Subscription Scope)
@@ -1806,7 +1764,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 output storageAccountName string = storage.name
 
-UPDATE ALL THE E2E CODE IN ONE SHOT, NO MISTAKES, SO I CAN CREATE A NEW GH REPO
 .github/workflows/deploy.yml
 YAML
 
@@ -2083,7 +2040,7 @@ Markdown
 Automated serverless metrics ingestion pipeline leveraging Telegraf hosted on Azure Container Apps (ACA), streaming via Event Hubs into Azure Data Explorer (ADX).
 
 ## Architecture Flow
-```text
+
 AppDynamics REST API ➔ Telegraf (Azure Container Apps) ➔ Azure Event Hubs (Kafka Interface) ➔ Azure Data Explorer (ADX)
 
 Repository Tree
@@ -2126,7 +2083,6 @@ Any push to the main branch fires the GitHub Actions workflow to execute:
 
 ### `AGENTS.MD`
 
-```markdown
 # Telegraf Agent Worker Configuration
 
 This directory contains configuration parameters and environment blueprints for the serverless **Telegraf Worker Engine** executing inside Azure Container Apps (ACA).
@@ -2229,11 +2185,10 @@ Markdown
 Automated serverless metrics ingestion pipeline leveraging Telegraf hosted on Azure Container Apps (ACA), streaming via Event Hubs into Azure Data Explorer (ADX).
 
 ## Architecture Flow
-```text
+
 AppDynamics REST API ➔ Telegraf (Azure Container Apps) ➔ Azure Event Hubs (Kafka Interface) ➔ Azure Data Explorer (ADX)
 
 Repository Structure
-Plaintext
 
 .
 ├── .github/
@@ -2301,7 +2256,7 @@ AppDMetrics
 
 ### `AGENTS.md`
 
-```markdown
+
 # Telegraf Agent Worker Configuration
 
 This document specifies variables, parsing mechanics, and runtime properties for the stateless `appd-telegraf-worker` instance running inside Azure Container Apps.
@@ -2339,8 +2294,6 @@ The container requires the following variables injected into the Azure Container
 | `EVENTHUB_CONNECTION_STRING` | Primary Connection String Token | `Endpoint=sb://...;SharedAccessKey=...` |
 
 > **Security Note:** In production settings, populate these environment fields inside the Container App container template using explicit Key Vault reference secrets (`@Microsoft.KeyVault(...)`) instead of plaintext values.
-
-RE-ASKING THE QUESTION, WHAT ARE THE PRE-REQUISITES? AZURE/NON-AZURE
 
 Azure: Subscription, OIDC Service Principal (Contributor).
 
