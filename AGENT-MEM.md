@@ -1,17 +1,3 @@
-I NEED TO ADD MEMORY TO MY AGENT
-10:27 PM
-Identified ambiguity and weighed clarification against reasonable interpretation
-
-Quick clarifying question before I dive in — which agent, and what kind of memory?
-
-Q: Which agent/project is this for?
-A: opencode-based agent
-
-Q: What kind of memory do you want?
-A: ATM AFTER EVERY COMPACTION, AGENT HAS 100% AMNESIA
-10:28 PM
-Searched the web
-
 TLDR:
 
     opencode has no built-in cross-compaction memory; need a plugin
@@ -25,12 +11,6 @@ Options (pick one):
     opencode-working-memory — zero extra API calls, piggybacks on existing compaction request, simplest/cheapest but no semantic search.
 
 Given your setup (Termux/HF Spaces, no spare API budget), I'd lean #1 or #3 — no embedding model overhead, no extra LLM calls.
-
-Want me to set up #1 (opencode-agent-memory) as a diff against your config?
-
-1 VS 3 ? PROS/CONS
-10:29 PM
-Weighed comparative advantages and disadvantages systematically
 
 TLDR:
 
@@ -59,8 +39,6 @@ For your amnesia-after-compaction pain specifically — #3 is the more direct fi
 
 Want the diff to wire up #3?
 
-GO AHEAD
-10:30 PM
 Architected configuration changes using diff-style formatting
 diff
 
@@ -100,17 +78,7 @@ Notes:
     Browse saved memory anytime with /memory in the TUI.
     If it conflicts with another compaction/prompt plugin you have installed, drop the name here and I'll check order-of-load issues.
 
-WILL THIS AUTO TRIGGER PRE-COMPACTION Y/N?
-10:34 PM
-Thought for 1s
-
-Y
-
 It hooks into opencode's existing compaction call itself — extraction happens automatically as part of that request, no manual trigger or separate API call needed.
-
-WHERE DOES IT STORE MEMORIES ON FS?
-10:34 PM
-Acknowledged uncertainty about filesystem storage specifics
 
 I don't have that explicitly from what I pulled earlier — the README mentioned the layout (frozen prompts, workspace vs hot state) but not the exact storage path. Let me check.
 Fetched: GitHub - sdwolf4103/opencode-working-memory: Automatic memory for OpenCode agents: persistent workspace memory, hot session context, and compaction-based memory extraction — with zero extra API calls.
@@ -121,10 +89,6 @@ TLDR:
     Durable workspace memory: ~/.local/share/opencode-working-memory/workspaces/{hash}/workspace-memory.json
 
 {hash} = derived per-workspace identifier. Inspect anytime with npx --package opencode-working-memory memory-diag status.
-
-WHAT IS OPENCODE CONTEXT EPOCH V2... DOES THIS PLUGIN LEVERAGE THAT?
-10:35 PM
-Investigated Context Epoch concept and plugin integration, flagged terminology ambiguity
 
 TLDR:
 
@@ -139,9 +103,6 @@ GitHub
 opencode-working-memory ties into this directly — its README states durable workspace memory and hot session state are rendered as separate frozen prompts that share the same epoch lifecycle, and it intentionally avoids invalidating the hot snapshot mid-epoch to preserve KV-cache reuse.
 
 I didn't find any "v2" terminology distinct from this — possible it's just internal shorthand you've seen elsewhere, or a recent rename. If you saw "epoch v2" in a specific changelog/PR, paste the link and I'll check what changed.
-
-AFTER INSTALLING "opencode-working-memory" HOW CAN I TEST IT TO BE SURE THAT IT WORKS? STEPS
-10:37 PM
 
 TLDR: Install → trigger compaction → check files exist → verify recall in new session
 
@@ -200,10 +161,6 @@ Shows whether it was promoted, reinforced, or rejected — useful if step 7 fail
 
 If step 7 doesn't work, check memory-diag rejected first — quality guards may have filtered it.
 
-THE PROBLEM IS IT NEVER READS AGENTS.MD WHEN IT IS THINKING THROUGH THINGS.... IF IT IS STUCK/CORNERED, OBV MD FILES ARE NOT READ... INSTEAD THERE IS A TOKEN STORM
-10:39 PM
-Searched the web
-
 TLDR:
 
     This is a known opencode bug, not specific to your plugin: AGENTS.md is loaded once at session start, but not re-consulted once the agent enters a stuck/repeat loop — there's an open issue matching your exact symptom (compaction loop, AGENTS.md ignored, huge log growth = your "token storm")
@@ -238,22 +195,10 @@ diff
 
 Want me to set max_steps across your existing agent configs as a diff?
 
-HALLUC LINK CITED !! anomalyco/opencode#19410
-10:40 PM
-
 You're right to call that out — I can't actually verify that issue number/URL resolves; I pulled it from search snippets and shouldn't have presented it as confirmed without fetching it myself.
 Fetched: Stuck in compaction loop, no matter what i do it doesn't read AGENTS.md · Issue #19410 · anomalyco/opencode
 
 Confirmed — the link is real, it resolves, and it matches the symptom (compaction loop, AGENTS.md ignored, huge log growth, Ubuntu 24, opencode 1.3.x). Apologies for asserting it without fetching first; that's exactly the kind of claim I should verify before stating.
-
-curl -v https://anomalyco/opencode#19410
-* Could not resolve host: anomalyco
-* Closing connection
-curl: (6) Could not resolve host: anomalyco
-10:41 PM
-Identified malformed URL and curl usage error
-
-That's a curl usage issue, not a dead link — you dropped the domain. anomalyco/opencode#19410 is the GitHub path shorthand, not a hostname. The actual URL is:
 
 https://github.com/anomalyco/opencode/issues/19410
 
@@ -263,10 +208,6 @@ bash
 curl -v https://github.com/anomalyco/opencode/issues/19410
 
 That will resolve fine (I fetched it directly above and got back full issue content — title, body, screenshots, version 1.3.3, etc.).
-
-HOW DO I INSTALL "superpowers" INTO OC
-10:43 PM
-Searched the web
 
 TLDR:
 
@@ -315,10 +256,6 @@ rm -f ~/.config/opencode/plugins/superpowers.js
 rm -rf ~/.config/opencode/skills/superpowers
 
 Given your Termux/Android setup, watch for git binary issues in the sandboxed environment — if the plugin can't shell out to git, fall back to the npm-prefix method above.
-
-DOES IT DO MEMORY PRE-POST COMPACTION?
-10:55 PM
-Distinguished skills framework from memory persistence system
 
 TLDR: No — superpowers isn't a memory system. It's a skills/workflow framework.
 
