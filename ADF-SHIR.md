@@ -1,42 +1,71 @@
-# SHIR High CPU Investigation
+# SHIR High CPU Investigation (FINAL)
 
 ## Goal
 - Find what caused the SHIR CPU spikes (some sustained ~1 hour) across 3-4 consecutive days, one day with notably more sustained spikes
 
 ## Setup
-- Source: Azure Database for PostgreSQL Flexible Server
+- Copy source: Azure Database for PostgreSQL Flexible Server (Copy reads only from Postgres)
 - SHIR: on-prem VMware VM, 16 vCPU / 48 GB RAM
-- Sink: Oracle DWH (on-prem)
+- Copy sink: Oracle DWH, on-prem (Copy writes only to Oracle)
 - Symptom: many `diawp.exe` processes, CPU often > 90%
 - Scaling the VM 8 -> 12 -> 16 vCPU had no effect
 
+## Pipeline design
+- Metadata-driven: Lookup activities run first and read dataset-definition JSONs hosted on ADLS
+- Those JSONs say which datasets the later (non-Lookup) activities connect to and use
+- After the Lookups: Copy and Script activities
+- A failed or timed-out Lookup blocks that pipeline's Copy/Script activities (unless the dependency condition is set to Failed/Completed)
+- The size of the metadata and the ForEach `batchCount` decide how many Copies start together
+
 ## Known facts
 - Defender / Antimalware Service: ruled out (1 process of each)
-- Activity types in pipelines: Copy, Lookup, Script
+- Activity types: Lookup, Copy, Script
 - Concurrent Jobs on the SHIR node: **28, set manually**
 - Activity timeout: 10 minutes
 - Copy activity:
   - `usedParallelCopies` = 1 (Degree of copy parallelism = Auto)
-  - Peak connections: source 1, target 2
+  - Peak connections: Postgres 1, Oracle 2
   - Sink write batch size = 50000 (default is 10000)
   - Sink write batch timeout = 0 (meaning unverified; may be "no timeout")
   - Max DIU = Auto (irrelevant on a SHIR)
   - Source queries are ADF expressions that resolve to SQL (check the resolved SQL in Monitor -> Activity run -> Input)
+- Lookup: reads small JSONs from ADLS, so negligible CPU on its own
+- From memory (unverified): about 10-20 Lookup activities timed out during the period
+- Script: contents and target not yet inspected
 - Log Analytics `AzureMetrics` is empty, so SHIR CPU cannot be joined in KQL yet
 - SHIR CPU is visible on the ADF Metrics chart
 
 ## Hypotheses (to confirm or reject)
 - H1: 28 single-threaded jobs on 16 vCPU oversubscribes the CPU
-- H2: 10-minute timeouts plus retries restart many activities together, creating bursts of new `diawp.exe` processes (and possibly lingering hung ones)
+- H2: 10-minute timeouts plus retries/reruns restart many activities together, creating bursts of new `diawp.exe` processes (and possibly lingering hung ones)
 - H3: per-copy load is high (batch size 50000, wide columns, `SELECT *`, slow Oracle sink keeping copies alive)
-- H4: non-ADF cause (VMware CPU contention, another process on the VM)
+- H4: Script activity on Oracle holds locks or runs long, stalling Copy sinks and holding job slots
+- H5: non-ADF cause (VMware CPU contention, another process on the VM)
+
+## Lookup timeouts: symptom or trigger?
+- Lookups use almost no CPU, so exclude them from any CPU/load estimate
+- Keep them as evidence until timing is checked:
+  - Timed out AFTER the CPU climbed: symptom (SHIR saturated or all 28 slots busy), ignore them
+  - Timed out BEFORE the CPU climbed: possible trigger (timeout -> retry/rerun -> full Copy fan-out starts at once)
+- They only take SHIR job slots if the ADLS linked service runs on the SHIR; if it uses the Azure IR, a timeout has a different cause (ADLS access, throttling)
+- If on the SHIR, ADLS traffic passes through the on-prem proxy and SSL inspection (possible slow or flaky path; no evidence yet)
+- Lookup output is capped (about 5000 rows / 4 MB, from memory); a large metadata JSON can fail
+
+## Open items (answerable from ADF Studio, no VM access)
+- [ ] ADLS linked service: "Connect via integration runtime" = SHIR or Azure IR?
+- [ ] Script activity: Settings tab (linked service, script text). Does it run on Postgres or Oracle? Any DML, truncate or stored procedure?
+- [ ] Dependency condition on activities after each Lookup (Succeeded / Failed / Completed)
+- [ ] `policy.retry` and `policy.timeout` on Lookup, Copy, Script
+- [ ] ForEach `batchCount` and `isSequential` (unset batchCount defaults to 20)
+- [ ] Which triggers start these pipelines; do several share the same minute?
+- [ ] Were the ~10-20 timed-out Lookups inside the spike windows, before them, or spread out?
 
 ## Investigation steps (UTC times throughout)
 
 ### 1. Pick spike windows
 - [ ] From the ADF Metrics chart (SHIR CPU), note start/end of 3-4 spikes, including the ~1 hour ones and the heaviest day
 
-### 2. Copy activities with concurrency (Log Analytics)
+### 2. Copy activities with concurrency
 - Counts concurrent Copy activities per 5 minutes; includes queue time, so it is an upper bound
 ```kusto
 let conc = ADFActivityRun
@@ -62,8 +91,59 @@ ADFActivityRun
 | order by Start asc
 ```
 
-### 3. Timeouts inside spike windows
+### 3. All activities, per 5-minute window, with flags
+- Covers Lookup, Copy, Script and all statuses
+- For Copy: `Postgres` = source side, `Oracle` = sink side
+- Lookup and Script failures are grouped separately (their target is not identifiable from the log)
+- `QueueSec` / `FirstByteSec` come from Copy `executionDetails`; field names are from memory. If those columns are empty, open one Copy run's Output in Monitor and check `executionDetails`
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where ActivityType in ("Copy","Lookup","Script")
+| where Status in ("Succeeded","Failed","Cancelled")
+| extend o = parse_json(Output)
+| extend ed = o.executionDetails[0]
+| extend DurationSec = datetime_diff('second', End, Start),
+         QueueSec = toreal(ed.detailedDurations.queuingDuration),
+         FirstByteSec = toreal(ed.detailedDurations.timeToFirstByte),
+         ErrMsg = tostring(parse_json(Error).message)
+| extend Side = case(
+    Status != "Failed", "n/a",
+    ActivityType == "Copy" and ErrMsg has "'Source' side", "Postgres",
+    ActivityType == "Copy" and ErrMsg has "'Sink' side", "Oracle",
+    ActivityType in ("Lookup","Script"), "Lookup/Script",
+    "Unknown")
+| sort by PipelineRunId asc, ActivityName asc, Start asc
+| extend Attempt = row_number(1, PipelineRunId != prev(PipelineRunId) or ActivityName != prev(ActivityName))
+| summarize
+    Runs = count(),
+    Failed = countif(Status == "Failed"),
+    FailedPostgres = countif(Side == "Postgres"),
+    FailedOracle = countif(Side == "Oracle"),
+    FailedLookupScript = countif(Side == "Lookup/Script"),
+    Retries = countif(Attempt > 1),
+    Queued60s = countif(QueueSec > 60),
+    AvgQueueSec = round(avg(QueueSec), 1),
+    MaxFirstByteSec = max(FirstByteSec),
+    AvgDurationSec = round(avg(DurationSec), 1),
+    MaxDurationSec = max(DurationSec)
+    by Window = bin(Start, 5m), ActivityType
+| extend Flag = case(
+    Queued60s > 0 or AvgQueueSec > 30, "QUEUE: job cap saturated",
+    Retries > 0, "RETRIES: restart churn",
+    MaxFirstByteSec > 60, "POSTGRES: slow connect/read",
+    FailedOracle > 0, "ORACLE: sink failures",
+    FailedPostgres > 0, "POSTGRES: source failures",
+    FailedLookupScript > 0, "LOOKUP/SCRIPT: failures",
+    Failed > 0, "FAILURES: other",
+    "")
+| order by Window asc
+```
+- Use: sort or filter the `Flag` column and look only at rows whose `Window` is inside a spike window from step 1
+
+### 4. Timeouts around spike windows (answers: before or after the CPU climb?)
 - Fill the window rows from step 1
+- Includes the 30 minutes before each window; `MinFromSpikeStart` is negative if the timeout was before the spike started
 ```kusto
 let windows = datatable(WStart:datetime, WEnd:datetime) [
     datetime(2026-10-03 08:00:00), datetime(2026-10-03 09:00:00),
@@ -78,12 +158,13 @@ ADFActivityRun
 | where ErrMsg has_any ("timeout","timed out","Timeout") or DurationSec between (570 .. 630)
 | extend k = 1
 | join kind=inner (windows | extend k = 1) on k
-| where Start <= WEnd and End >= WStart
-| project WStart, WEnd, Start, End, DurationSec, PipelineName, ActivityName, ActivityType, ErrCode, ErrMsg
+| where Start <= WEnd and End >= WStart - 30m
+| extend MinFromSpikeStart = datetime_diff('minute', End, WStart)
+| project WStart, WEnd, MinFromSpikeStart, Start, End, DurationSec, PipelineName, ActivityName, ActivityType, ErrCode, ErrMsg
 | order by WStart asc, Start asc
 ```
 
-### 4. Timeouts per hour (find the heavy day)
+### 5. Optional follow-up: timeouts per hour (shows the heavy day)
 ```kusto
 ADFActivityRun
 | where TimeGenerated > ago(7d)
@@ -95,41 +176,75 @@ ADFActivityRun
 | summarize Timeouts = count(), Pipelines = dcount(PipelineName) by Hour = bin(Start, 1h), ActivityType
 | order by Hour asc
 ```
-- If the timeout filter returns nothing, remove the `where ErrMsg ...` line and inspect the error text
-- If `Status` values differ: `ADFActivityRun | distinct Status`
 
-### 5. Read the results
-| Finding | Meaning | Next |
-|---------|---------|------|
-| `PeakConc` near 28 when CPU is high | H1 | Lower Concurrent Jobs (start ~10) |
-| Timeouts clustered every ~10 min in spike windows | H2 | Check `policy.retry`, fix the slow dependency, stagger |
-| Same pipeline/activity timing out repeatedly | Specific culprit | Inspect its SQL, sink, locks |
-| `ORA-` in `ErrMsg` | Oracle slow or locked | DBA review |
-| Few small copies, no timeouts, CPU still high | H4 | VM and VMware checks (step 6) |
+### 6. Optional follow-up: failures by side and error type
+- Shows whether connection problems appear on the Postgres side, the Oracle side, or both
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where ActivityType in ("Copy","Lookup","Script")
+| where Status == "Failed"
+| extend ErrMsg = tostring(parse_json(Error).message), ErrCode = tostring(parse_json(Error).errorCode)
+| extend Side = case(
+    ActivityType == "Copy" and ErrMsg has "'Source' side", "Postgres",
+    ActivityType == "Copy" and ErrMsg has "'Sink' side", "Oracle",
+    ActivityType in ("Lookup","Script"), "Lookup/Script",
+    "Unknown")
+| extend ErrType = case(
+    ErrMsg has_any ("timeout","timed out"), "Timeout",
+    ErrMsg has_any ("ORA-","Oracle"), "Oracle error",
+    ErrMsg has_any ("refused","reset","closed","unreachable","network","connect"), "Connection",
+    ErrMsg has_any ("password","authentication","login","denied"), "Auth",
+    ErrMsg has_any ("too many","max_connections","remaining connection slots"), "Connection limit",
+    "Other")
+| summarize Failures = count(), Pipelines = dcount(PipelineName), Example = take_any(substring(ErrMsg, 0, 200))
+    by Hour = bin(Start, 1h), Side, ErrType, ErrCode
+| order by Hour asc
+```
+- The "'Source' side" / "'Sink' side" wording is from memory; check it against a real error. Rows with `Side = Unknown` need a manual read of `ErrMsg`
+
+### 7. Read the results
+| Finding (in spike windows) | Meaning | Next |
+|----------------------------|---------|------|
+| Flag `QUEUE`, or `PeakConc` near 28 | H1 | Lower Concurrent Jobs (start ~10) |
+| Flag `RETRIES`, or timeouts every ~10 min | H2 | Check `policy.retry`, fix the slow dependency, stagger |
+| Lookup timeouts with negative `MinFromSpikeStart` | Lookup timeout may trigger the Copy wave | Check retries/reruns after those Lookups, ADLS linked service IR, trigger overlap |
+| Lookup timeouts only after the CPU climb | Symptom | Ignore Lookups |
+| Flag `POSTGRES` (slow connect/read or source failures) | Postgres or network path to Azure | Check Postgres CPU/connections and network |
+| Flag `ORACLE`, or `ORA-` in errors, long copy durations | Oracle sink slow or locked | DBA review of sessions, waits, locks |
+| Flag `LOOKUP/SCRIPT` on Script | H4 | Inspect the Script content and target |
+| Same pipeline/activity repeating | Specific culprit | Inspect its SQL, sink, locks |
+| Few small copies, no flags, CPU still high | H5 | VM and VMware checks (step 8) |
 | Few large copies running most of the hour | H3 | Batch size, columns, Oracle waits |
 
-### 6. Checks by other teams (same windows)
+### 8. Checks by other teams (same windows)
 - VM admin: Task Manager during a spike
   - Total `diawp.exe` CPU vs other processes
   - Any `diawp.exe` with uptime longer than 10 minutes (timed-out processes not exiting)
 - Virtualization team: CPU Ready %, co-stop, ballooning/swapping for the VM
-- DBA team: Oracle DWH sessions, waits and locks for the ADF user, long-running DML from Script activities
+- DBA team: Oracle DWH sessions, waits and locks for the ADF user, long-running DML from Script, session count (28 jobs x 2 = up to ~56)
 - Azure side: Postgres CPU, connections, long-running queries
 
-### 7. Enable CPU in Log Analytics (optional, needs ADF Contributor)
+### 9. Enable CPU in Log Analytics (optional, needs ADF Contributor)
 - ADF -> Monitoring -> Diagnostic settings -> tick **AllMetrics** for the Log Analytics destination
 - Fills going forward only (no backfill)
 - Check names: `AzureMetrics | distinct MetricName` (expected `IntegrationRuntimeCpuPercentage`, unverified)
 - Without it, use an Azure Workbook with a Metrics item (SHIR CPU) above a Logs item (step 2 query) on the same time range
 
 ## Change plan (one at a time, record each result)
-- [ ] Record current settings before any change (Concurrent Jobs, retry, timeouts, batch size)
+- [ ] Record current settings before any change (Concurrent Jobs, retry, timeouts, batch size, `batchCount`)
 - [ ] Lower Concurrent Jobs from 28 to about 10, then tune on 5-minute average CPU (> 80% lower by 1-2; < 50% with queueing raise by 1-2)
-- [ ] Check `policy.retry` and `policy.timeout` on the pipelines in the timeout results
+- [ ] Review `policy.retry` / `policy.timeout` on Lookup, Copy, Script
+- [ ] Set ForEach `batchCount` to match the cap; stagger triggers
 - [ ] Test write batch size 10000 on one pipeline vs 50000
 - [ ] Set an explicit write batch timeout and verify what 0 means
-- [ ] Stagger triggers; set ForEach `batchCount` to match the cap
-- [ ] Tell the DBA team about the connection and load change (28 jobs x 2 = up to ~56 Oracle sessions)
+- [ ] Tell the DBA team about the connection and load change
+
+## Caveats
+- None of the KQL has been run against the real workspace
+- `executionDetails` field names and the "Source/Sink side" error wording are unverified
+- The Lookup timeout count (10-20) is from memory
+- Nothing in this file is assumed to be applied; verify current state before building on it
 
 ## Results log
 | Date | Change | Concurrent jobs | CPU avg/peak | Timeouts | Notes |
