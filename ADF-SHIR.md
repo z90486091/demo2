@@ -289,3 +289,92 @@ ADFActivityRun
 **Caveats**
 - This is a general picture of what such scripts usually contain, not what yours do.
 - A Script's CPU cost on the SHIR itself is small, since the work runs on the database. Its impact on the spikes is indirect, through slot occupancy, blocked Copies and retries.
+
+
+**Useful LAW kqls**
+- Seven queries for the Log Analytics workspace (LAW), each a full query.
+- Untested here. Column names are from memory, so check them against the schema pane if one fails.
+
+**1. Which ADF tables have data**
+```kusto
+Usage
+| where TimeGenerated > ago(7d)
+| summarize MB = round(sum(Quantity), 1) by DataType
+| order by MB desc
+```
+- Look for `ADFActivityRun`, `ADFPipelineRun`, `ADFTriggerRun` and `AzureMetrics`.
+
+**2. Activity runs by day, pipeline, type and status**
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where Status in ("Succeeded","Failed","Cancelled")
+| summarize Runs = count(),
+            Failed = countif(Status == "Failed"),
+            AvgSec = round(avg(datetime_diff('second', End, Start)), 1),
+            MaxSec = max(datetime_diff('second', End, Start))
+    by Day = bin(Start, 1d), PipelineName, ActivityType
+| order by Day asc, Runs desc
+```
+- Gives you the organizing Monitor lacks.
+
+**3. Activity starts per hour (find the heavy day and hour)**
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where Status in ("Succeeded","Failed","Cancelled")
+| summarize Starts = count() by Hour = bin(Start, 1h), ActivityType
+| order by Hour asc
+| render timechart
+```
+
+**4. Triggers firing in the same minute**
+```kusto
+ADFTriggerRun
+| where TimeGenerated > ago(7d)
+| summarize Triggers = count(), TriggerNames = make_set(TriggerName, 10) by Minute = bin(TimeGenerated, 1m)
+| where Triggers > 1
+| order by Triggers desc
+```
+- Overlapping triggers would fit the fan-out suspicion.
+
+**5. Slowest activities in the week**
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where Status in ("Succeeded","Failed","Cancelled")
+| extend DurationSec = datetime_diff('second', End, Start)
+| top 50 by DurationSec desc
+| project Start, End, DurationSec, PipelineName, ActivityName, ActivityType, Status
+```
+
+**6. Retries by activity**
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where Status in ("Succeeded","Failed","Cancelled")
+| summarize Attempts = count(), Failures = countif(Status == "Failed")
+    by PipelineRunId, PipelineName, ActivityName, ActivityType
+| where Attempts > 1
+| summarize RetriedActivities = count(), TotalExtraAttempts = sum(Attempts - 1)
+    by PipelineName, ActivityName, ActivityType
+| order by TotalExtraAttempts desc
+```
+- Retries restart `diawp.exe` processes, so the top rows are the pipelines to look at first.
+
+**7. Top error messages**
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where Status == "Failed"
+| extend ErrCode = tostring(parse_json(Error).errorCode),
+         ErrMsg = substring(tostring(parse_json(Error).message), 0, 200)
+| summarize Failures = count(), Pipelines = dcount(PipelineName), FirstSeen = min(Start), LastSeen = max(Start)
+    by ActivityType, ErrCode, ErrMsg
+| order by Failures desc
+```
+
+**Notes**
+- Times are UTC.
+- Query 6 assumes each retry appears as a separate row with the same `PipelineRunId` and `ActivityName`. If counts look off, that assumption is wrong.
+- Query 4 depends on `ADFTriggerRun` being collected, which is a separate diagnostic category.
