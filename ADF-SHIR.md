@@ -1,4 +1,4 @@
-# SHIR High CPU Investigation (FINAL)
+# SHIR High CPU Investigation
 
 ## Goal
 - Find what caused the SHIR CPU spikes (some sustained ~1 hour) across 3-4 consecutive days, one day with notably more sustained spikes
@@ -250,3 +250,42 @@ ADFActivityRun
 | Date | Change | Concurrent jobs | CPU avg/peak | Timeouts | Notes |
 |------|--------|-----------------|--------------|----------|-------|
 |      |        |                 |              |          |       |
+
+## Addendum
+
+**What to look for in "Script" activity types**
+- Likely: pre-copy cleanup, post-copy merge or watermark updates, and audit logging, usually on Oracle.
+- Red flags are long-running DML, truncate or delete on tables a Copy is writing to, and unbounded parallelism.
+- A Script mostly costs time and locks, not SHIR CPU.
+
+**What you will probably find**
+- **Pre-copy:** `TRUNCATE`, `DELETE ... WHERE`, or disabling indexes and constraints on the target.
+- **Post-copy:** `MERGE` or `INSERT ... SELECT` from a staging table into the final table, or a stored procedure call.
+- **Control and logging:** watermark updates, audit or run-log inserts, status flags.
+- **Maintenance:** stats gathering (`DBMS_STATS`), index rebuilds, partition operations.
+- In a metadata-driven setup, the script text may be built from the ADLS JSON values as an expression. If so, check the resolved SQL in Monitor → Activity run → Input.
+
+**Red flags**
+- **`TRUNCATE` or `DELETE` on a table a Copy is writing to:** locks or waits, so the Copy runs long, holds its slot and may time out.
+- **Large `MERGE`, `UPDATE` or `DELETE` with no `WHERE` or batching:** minutes-long statements that hit the 10-minute timeout, then retry and redo the work.
+- **Same script running in parallel across many ForEach iterations against the same table:** lock contention, and it fills job slots while waiting.
+- **Missing indexes on the merge or delete key:** full scans on a big DWH table.
+- **Stats gathering or index rebuild during business hours:** heavy load on Oracle.
+- **Multiple statements in one script block:** a failure part-way can leave partial changes, and a retry reruns everything.
+- **Retry set above 0 on a non-idempotent script:** duplicates or double deletes.
+- **Dynamic SQL built from metadata with no validation:** one bad JSON entry can produce an unbounded statement.
+- **Commit behaviour you can't see:** long transactions hold undo and locks until the activity ends.
+
+**Hotspots for your problem**
+- Scripts that run on Oracle at the same time as the Copy sinks writing to it.
+- Scripts that block until the 10-minute timeout, then retry. Timing out and retrying fits the restart-churn suspect.
+- Scripts launched in volume by the same fan-out as the Copies.
+
+**Where to look**
+- ADF Studio → Author → pipeline → Script activity → Settings: linked service, script text, script type (Query or NonQuery), and the Retry and Timeout values in General.
+- Monitor → Activity run → Input shows the resolved SQL, and Output shows duration and rows affected.
+- The DBA team can match Script statements to Oracle long-running sessions, lock waits and blocking sessions in the spike windows.
+
+**Caveats**
+- This is a general picture of what such scripts usually contain, not what yours do.
+- A Script's CPU cost on the SHIR itself is small, since the work runs on the database. Its impact on the spikes is indirect, through slot occupancy, blocked Copies and retries.
