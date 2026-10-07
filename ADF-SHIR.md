@@ -1,178 +1,137 @@
-# SHIR High CPU Investigation (Postgres Flexible Server -> SHIR -> Oracle DWH)
+# SHIR High CPU Investigation
 
-## Context
+## Goal
+- Find what caused the SHIR CPU spikes (some sustained ~1 hour) across 3-4 consecutive days, one day with notably more sustained spikes
+
+## Setup
 - Source: Azure Database for PostgreSQL Flexible Server
-- SHIR: on-prem VMware VM, 16 vCPU / 48 GB RAM, Windows Defender running
+- SHIR: on-prem VMware VM, 16 vCPU / 48 GB RAM
 - Sink: Oracle DWH (on-prem)
-- Symptom: many `diawp.exe` processes, CPU > 90% often
-- Scale-up 8 -> 12 -> 16 vCPU gave no relief, only more `diawp.exe` processes
-- Working hypothesis: concurrent job limit is on Auto, so it scales with vCPU and fills any capacity added
-- Secondary suspects: Defender real-time scanning, VMware CPU contention, per-copy load (parallel copies, wide columns, sink batch size)
-- Nothing below is confirmed applied. Record the current value of each setting before changing it.
+- Symptom: many `diawp.exe` processes, CPU often > 90%
+- Scaling the VM 8 -> 12 -> 16 vCPU had no effect
 
-## Who needs access to what
-- ADF Studio / Azure Portal: needs someone with ADF access (Reader is enough for viewing, Contributor to change)
-- SHIR VM: needs someone with admin on the VM (Windows team)
-- VMware host: needs the virtualization team (vCenter)
-- Oracle DWH: needs the DBA team
-- Postgres Flexible Server: needs the Azure / DB owner (Azure Monitor metrics)
+## Known facts
+- Defender / Antimalware Service: ruled out (1 process of each)
+- Activity types in pipelines: Copy, Lookup, Script
+- Concurrent Jobs on the SHIR node: **28, set manually**
+- Activity timeout: 10 minutes
+- Copy activity:
+  - `usedParallelCopies` = 1 (Degree of copy parallelism = Auto)
+  - Peak connections: source 1, target 2
+  - Sink write batch size = 50000 (default is 10000)
+  - Sink write batch timeout = 0 (meaning unverified; may be "no timeout")
+  - Max DIU = Auto (irrelevant on a SHIR)
+  - Source queries are ADF expressions that resolve to SQL (check the resolved SQL in Monitor -> Activity run -> Input)
+- Log Analytics `AzureMetrics` is empty, so SHIR CPU cannot be joined in KQL yet
+- SHIR CPU is visible on the ADF Metrics chart
 
----
+## Hypotheses (to confirm or reject)
+- H1: 28 single-threaded jobs on 16 vCPU oversubscribes the CPU
+- H2: 10-minute timeouts plus retries restart many activities together, creating bursts of new `diawp.exe` processes (and possibly lingering hung ones)
+- H3: per-copy load is high (batch size 50000, wide columns, `SELECT *`, slow Oracle sink keeping copies alive)
+- H4: non-ADF cause (VMware CPU contention, another process on the VM)
 
-## A. Defender / antivirus (VM admin required)
+## Investigation steps (UTC times throughout)
 
-### Why it was raised
-- Defender real-time protection scans files on read/write and on process/DLL load
-- SHIR writes logs, temp files and may spill buffers to disk; each `diawp.exe` start loads DLLs
-- `MsMpEng.exe` (Antimalware Service Executable) competes for the same CPU
-- Likely a contributor, not the root cause: Postgres -> Oracle copy is mostly in-memory streaming, so AV load tracks disk activity, not row throughput
+### 1. Pick spike windows
+- [ ] From the ADF Metrics chart (SHIR CPU), note start/end of 3-4 spikes, including the ~1 hour ones and the heaviest day
 
-### Check first (evidence before changes)
-- [ ] During a spike, Task Manager -> Details -> sort by CPU. Record CPU % of `MsMpEng.exe` vs total of all `diawp.exe`
-- [ ] If `MsMpEng.exe` is under ~5% of total CPU: AV is not the problem
-- [ ] If `MsMpEng.exe` is 15%+ sustained: AV is a real contributor
-- [ ] Defender performance recording (PowerShell as admin):
-  - `New-MpPerformanceRecording -RecordTo C:\temp\defender.etl` (run during spike, stop when prompted)
-  - `Get-MpPerformanceReport -Path C:\temp\defender.etl -TopProcesses 10 -TopFiles 10`
-  - Look for SHIR folders or `diawp.exe` in top scanned files/processes
-- [ ] List current exclusions: `Get-MpPreference | Select-Object ExclusionPath, ExclusionProcess`
-- [ ] Check whether Group Policy / Intune / Defender for Endpoint manages the exclusions (local changes may be overwritten)
-
-### If AV is a contributor
-- Do NOT disable Defender. Add scoped exclusions through your security team
-- Candidate path exclusions (verify actual paths on the VM):
-  - SHIR install folder (typically `C:\Program Files\Microsoft Integration Runtime\`)
-  - SHIR data/log folder (typically under `C:\ProgramData\Microsoft\DataTransfer\`)
-  - Any temp folder the SHIR uses for spill
-- Candidate process exclusions: `diawp.exe`, `DIAHostService.exe` (confirm names in Task Manager)
-- Expected impact: reduces scan overhead on SHIR file I/O; modest gain. Does not fix too many concurrent jobs
-- Get security sign-off and document the exclusion
-
----
-
-## B. SHIR node settings (ADF Studio)
-- [ ] Manage -> Integration runtimes -> SHIR -> Nodes
-- [ ] Record: Concurrent Jobs (Running / Limit), node version, CPU, available memory
-- [ ] Note whether the limit is auto-derived or manual
-- [ ] Record SHIR version (older versions had CPU/memory bugs) and whether auto-update is on
-
-### Proposed starting values (to test, not confirmed)
-- Concurrent Jobs: 6
-- Degree of copy parallelism: 2
-- Rule of thumb: `concurrent jobs x copy parallelism` ~ 8-12 on 16 vCPU
-- Many small tables: jobs 8, parallelism 1
-- Few huge tables: jobs 3-4, parallelism 3-4
-- Tune on 5-minute average CPU: > 80% lower by 1-2; < 50% with queueing raise by 1-2
-
----
-
-## C. Count and identify copy activities
-
-### In ADF Studio (Monitor)
-- [ ] Monitor -> Pipeline runs -> pick a spike window -> open run -> Activity runs
-- [ ] Filter Activity type = Copy; note Integration runtime column = your SHIR
-- [ ] Note which pipelines trigger at the same minute
-- [ ] Per activity run -> Output (glasses icon): `usedParallelCopies`, `rowsCopied`, `dataRead`, `copyDuration`, `throughput`
-
-### In Azure Monitor (Metrics)
-- [ ] ADF resource -> Metrics -> chart SHIR CPU utilization, available memory, queue length, concurrent jobs for the spike window
-- [ ] Overlay with trigger times
-
-### In Log Analytics (only if diagnostic settings are on; adjust columns to your schema)
+### 2. Copy activities with concurrency (Log Analytics)
+- Counts concurrent Copy activities per 5 minutes; includes queue time, so it is an upper bound
 ```kusto
+let conc = ADFActivityRun
+| where TimeGenerated > ago(24h) and ActivityType == "Copy"
+| where Status in ("Succeeded","Failed")
+| extend t = range(bin(Start,1m), bin(End,1m), 1m)
+| mv-expand t to typeof(datetime)
+| summarize c = count() by t
+| summarize PeakConc = max(c) by Bin = bin(t, 5m);
 ADFActivityRun
 | where TimeGenerated > ago(24h) and ActivityType == "Copy"
 | where Status in ("Succeeded","Failed")
 | extend o = parse_json(Output)
+| extend Bin = bin(Start, 5m)
 | project Start, End, PipelineName, ActivityName,
           DurationSec = datetime_diff('second', End, Start),
           RowsCopied = tolong(o.rowsCopied),
           MBRead = tolong(o.dataRead) / 1048576,
           ParallelCopies = toint(o.usedParallelCopies),
-          IR = tostring(o.effectiveIntegrationRuntime)
+          IR = tostring(o.effectiveIntegrationRuntime), Bin
+| join kind=leftouter conc on Bin
+| project-away Bin*
 | order by Start asc
 ```
-- [ ] Use Start/End overlap to calculate peak concurrent copies
-- [ ] Compare peaks against CPU spikes
 
-### Record
-| Window | Peak concurrent copies | Pipelines involved | Avg CPU | Notes |
-|--------|------------------------|--------------------|---------|-------|
-|        |                        |                    |         |       |
-
----
-
-## D. Copy activity settings to inspect
-- Where: Author -> pipeline -> Copy activity -> Source / Sink / Settings tabs, or `{}` for full JSON
-- If Git-linked: `/pipeline/<name>.json` in the repo
-
-### Checklist
-- [ ] `parallelCopies`: missing = Auto (likely culprit)
-- [ ] Source type: `AzurePostgreSqlSource` or `PostgreSqlV2Source`
-- [ ] Source query: `SELECT *`? wide `text` / `jsonb` / `bytea` columns?
-- [ ] Source partition options: dynamic range with many partitions?
-- [ ] Watermark / `WHERE` filter present, or full reload every run?
-- [ ] Sink type: `OracleSink` or `OracleV2Sink`
-- [ ] `writeBatchSize`: missing = default 10000
-- [ ] `writeBatchTimeout`: missing = default 30 min
-- [ ] Pre-copy script on the sink?
-- [ ] Parent ForEach: `batchCount` (default 20 if missing) and `isSequential`
-- [ ] Staging: not supported for an Oracle sink
-
-### Reference sample (starting values, to diff against)
-```json
-{
-  "name": "Copy_PG_to_OracleDWH",
-  "type": "Copy",
-  "policy": { "timeout": "0.12:00:00", "retry": 1, "retryIntervalInSeconds": 60 },
-  "typeProperties": {
-    "source": {
-      "type": "AzurePostgreSqlSource",
-      "query": "SELECT col_a, col_b, col_c FROM public.my_table WHERE updated_at >= '@{pipeline().parameters.watermark}'",
-      "queryTimeout": "02:00:00"
-    },
-    "sink": {
-      "type": "OracleSink",
-      "writeBatchSize": 10000,
-      "writeBatchTimeout": "00:30:00"
-    },
-    "parallelCopies": 2,
-    "enableStaging": false
-  }
-}
+### 3. Timeouts inside spike windows
+- Fill the window rows from step 1
+```kusto
+let windows = datatable(WStart:datetime, WEnd:datetime) [
+    datetime(2026-10-03 08:00:00), datetime(2026-10-03 09:00:00),
+    datetime(2026-10-04 13:00:00), datetime(2026-10-04 14:00:00)
+];
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where ActivityType in ("Copy","Lookup","Script")
+| where Status == "Failed"
+| extend DurationSec = datetime_diff('second', End, Start)
+| extend ErrMsg = tostring(parse_json(Error).message), ErrCode = tostring(parse_json(Error).errorCode)
+| where ErrMsg has_any ("timeout","timed out","Timeout") or DurationSec between (570 .. 630)
+| extend k = 1
+| join kind=inner (windows | extend k = 1) on k
+| where Start <= WEnd and End >= WStart
+| project WStart, WEnd, Start, End, DurationSec, PipelineName, ActivityName, ActivityType, ErrCode, ErrMsg
+| order by WStart asc, Start asc
 ```
 
----
+### 4. Timeouts per hour (find the heavy day)
+```kusto
+ADFActivityRun
+| where TimeGenerated > ago(7d)
+| where ActivityType in ("Copy","Lookup","Script")
+| where Status == "Failed"
+| extend DurationSec = datetime_diff('second', End, Start)
+| extend ErrMsg = tostring(parse_json(Error).message)
+| where ErrMsg has_any ("timeout","timed out","Timeout") or DurationSec between (570 .. 630)
+| summarize Timeouts = count(), Pipelines = dcount(PipelineName) by Hour = bin(Start, 1h), ActivityType
+| order by Hour asc
+```
+- If the timeout filter returns nothing, remove the `where ErrMsg ...` line and inspect the error text
+- If `Status` values differ: `ADFActivityRun | distinct Status`
 
-## E. VMware host (virtualization team)
-- [ ] CPU Ready % for the SHIR VM during spikes (sustained > 5% per vCPU is a concern)
-- [ ] CPU co-stop (large vCPU counts can hurt scheduling)
-- [ ] Memory ballooning / swapping on the VM
-- [ ] Host CPU utilization and VM count on the host
-- [ ] Check whether 16 vCPU is oversized for the host (fewer vCPUs can sometimes schedule better)
+### 5. Read the results
+| Finding | Meaning | Next |
+|---------|---------|------|
+| `PeakConc` near 28 when CPU is high | H1 | Lower Concurrent Jobs (start ~10) |
+| Timeouts clustered every ~10 min in spike windows | H2 | Check `policy.retry`, fix the slow dependency, stagger |
+| Same pipeline/activity timing out repeatedly | Specific culprit | Inspect its SQL, sink, locks |
+| `ORA-` in `ErrMsg` | Oracle slow or locked | DBA review |
+| Few small copies, no timeouts, CPU still high | H4 | VM and VMware checks (step 6) |
+| Few large copies running most of the hour | H3 | Batch size, columns, Oracle waits |
 
-## F. Source and sink side
-- Postgres Flexible Server (Azure Monitor): CPU, active connections, network egress, long-running queries during spikes
-- Oracle DWH (DBA team): active sessions from the ADF user, array insert waits, CPU, indexes/triggers on target tables, redo/undo pressure
-- Slow source or sink keeps `diawp.exe` processes alive longer and stacks them up
+### 6. Checks by other teams (same windows)
+- VM admin: Task Manager during a spike
+  - Total `diawp.exe` CPU vs other processes
+  - Any `diawp.exe` with uptime longer than 10 minutes (timed-out processes not exiting)
+- Virtualization team: CPU Ready %, co-stop, ballooning/swapping for the VM
+- DBA team: Oracle DWH sessions, waits and locks for the ADF user, long-running DML from Script activities
+- Azure side: Postgres CPU, connections, long-running queries
 
-## G. Change plan (apply one at a time, record results)
-1. [ ] Record baselines (sections A-F)
-2. [ ] Set Concurrent Jobs manually (start 6)
-3. [ ] Set `parallelCopies` explicitly (start 2)
-4. [ ] Set ForEach `batchCount` to match the node cap
-5. [ ] Stagger triggers
-6. [ ] Trim source columns, tune `writeBatchSize`
-7. [ ] If AV evidence supports it: request scoped exclusions
-8. [ ] Re-measure CPU, run duration, failure rate after each change
+### 7. Enable CPU in Log Analytics (optional, needs ADF Contributor)
+- ADF -> Monitoring -> Diagnostic settings -> tick **AllMetrics** for the Log Analytics destination
+- Fills going forward only (no backfill)
+- Check names: `AzureMetrics | distinct MetricName` (expected `IntegrationRuntimeCpuPercentage`, unverified)
+- Without it, use an Azure Workbook with a Metrics item (SHIR CPU) above a Logs item (step 2 query) on the same time range
 
-### Results log
-| Date | Change | Concurrent jobs | CPU avg/peak | Run duration | Notes |
-|------|--------|-----------------|--------------|--------------|-------|
-|      |        |                 |              |              |       |
+## Change plan (one at a time, record each result)
+- [ ] Record current settings before any change (Concurrent Jobs, retry, timeouts, batch size)
+- [ ] Lower Concurrent Jobs from 28 to about 10, then tune on 5-minute average CPU (> 80% lower by 1-2; < 50% with queueing raise by 1-2)
+- [ ] Check `policy.retry` and `policy.timeout` on the pipelines in the timeout results
+- [ ] Test write batch size 10000 on one pipeline vs 50000
+- [ ] Set an explicit write batch timeout and verify what 0 means
+- [ ] Stagger triggers; set ForEach `batchCount` to match the cap
+- [ ] Tell the DBA team about the connection and load change (28 jobs x 2 = up to ~56 Oracle sessions)
 
-## H. What to bring back for a diff
-- Pipeline JSON: Copy activity(ies) and parent ForEach
-- Node screenshot showing Concurrent Jobs (Running/Limit)
-- Task Manager / Defender recording summary from a spike
-- Peak concurrent copy count
+## Results log
+| Date | Change | Concurrent jobs | CPU avg/peak | Timeouts | Notes |
+|------|--------|-----------------|--------------|----------|-------|
+|      |        |                 |              |          |       |
