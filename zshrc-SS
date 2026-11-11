@@ -1,0 +1,77 @@
+# ~/.zshrc
+
+# Load Starship
+eval "$(starship init zsh)"
+
+# Enable command auto-completion
+autoload -U compinit
+compinit
+
+# History settings
+HISTSIZE=10000
+SAVEHIST=10000
+HISTFILE=~/.zsh_history
+setopt append_history
+setopt share_history
+
+# Set your preferred editor
+export EDITOR="vim"  # Change to your preferred editor
+
+# Simple prompt customizations
+#PROMPT="%F{cyan}%n@%m%f %F{yellow}%~%f %# "
+
+# Aliases for convenience
+#alias ll='ls -la'
+#alias gs='git status'
+#alias ga='git add'
+#alias gc='git commit'
+
+zstyle ':completion:*' menu select
+
+source $ZSH/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+source $ZSH/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+# format = """
+# [](white)$os\
+# [](bg:#0055aa fg:white)\
+# $directory\
+# [](fg:#0055aa bg:#77aa00)\
+# $git_branch$git_status\
+# [](fg:#77aa00)\
+# $fill\
+# $python\
+# $time[ ](white)
+# """
+
+# [fill]
+# symbol = " "
+
+# [os]
+# disabled = false
+# format = "[$symbol]($style)"
+# style = "bg:white fg:black"
+
+# [directory]
+# style = "bg:#0055aa fg:white"
+# format = "[  $path ]($style)"
+# truncation_length = 3
+# truncation_symbol = "…/"
+
+# [git_branch]
+# symbol = ""
+# style = "bg:#77aa00 fg:black"
+# format = '[[ $symbol $branch ](fg:black bg:#77aa00)]($style)'
+
+# [time]
+# disabled = false
+# time_format = "%R" # 24hr time
+# style = "bg:white fg:black"
+# format = "[[  $time ](fg:black bg:white)]($style)"
+
+# [python]
+# symbol = ""
+# style = "bg:#0055aa fg:black"
+# format = '[[ $symbol ($virtualenv) ](fg:black bg:#0055aa)]($style)'
+
+
+# eval "$(starship init zsh)"
